@@ -81,6 +81,29 @@ export default function App() {
         reattachInFlight()
         return
       }
+
+      // One-time cutover: import a pre-SQLite localStorage transcript so the switch
+      // to the new backbone doesn't wipe an existing conversation. Runs once, then
+      // clears the old key.
+      try {
+        const raw = localStorage.getItem('artemis.transcript.v1')
+        const parsed = raw ? JSON.parse(raw) : null
+        if (Array.isArray(parsed) && parsed.length) {
+          for (const msg of parsed) {
+            if (msg?.role && typeof msg.text === 'string') {
+              await window.artemis?.history?.append(msg.role, msg.text)
+            }
+          }
+          localStorage.removeItem('artemis.transcript.v1')
+          if (cancelled) return
+          setMessages(parsed as Message[])
+          reattachInFlight()
+          return
+        }
+      } catch {
+        // corrupt/absent old store — fall through to a fresh greeting
+      }
+
       const { facts } = (await window.artemis?.memory?.load()) ?? { facts: [] }
       if (cancelled) return
       const greeting =
