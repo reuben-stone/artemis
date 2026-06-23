@@ -76,19 +76,22 @@ export default function App() {
     ;(async () => {
       const restored = (await window.artemis?.history?.load()) ?? []
       if (cancelled) return
-      if (restored.length) {
+      // A real conversation has at least one user message. Gate on that — NOT on
+      // "non-empty" — because a prior boot may have seeded a lone auto-greeting,
+      // which must not short-circuit the one-time migration below.
+      if (restored.some((m) => m.role === 'user')) {
         setMessages(restored as Message[])
         reattachInFlight()
         return
       }
 
       // One-time cutover: import a pre-SQLite localStorage transcript so the switch
-      // to the new backbone doesn't wipe an existing conversation. Runs once, then
-      // clears the old key.
+      // to the new backbone doesn't wipe an existing conversation. Only import if it
+      // actually holds a conversation (a user message), then clear the old key.
       try {
         const raw = localStorage.getItem('artemis.transcript.v1')
         const parsed = raw ? JSON.parse(raw) : null
-        if (Array.isArray(parsed) && parsed.length) {
+        if (Array.isArray(parsed) && parsed.some((m) => m?.role === 'user')) {
           for (const msg of parsed) {
             if (msg?.role && typeof msg.text === 'string') {
               await window.artemis?.history?.append(msg.role, msg.text)
@@ -102,6 +105,13 @@ export default function App() {
         }
       } catch {
         // corrupt/absent old store — fall through to a fresh greeting
+      }
+
+      // SQLite already held a lone auto-greeting (no user turn yet): keep it rather
+      // than committing a duplicate greeting.
+      if (restored.length) {
+        setMessages(restored as Message[])
+        return
       }
 
       const { facts } = (await window.artemis?.memory?.load()) ?? { facts: [] }
