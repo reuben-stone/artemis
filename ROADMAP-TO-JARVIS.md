@@ -80,6 +80,23 @@ mind didn't fully forget.
 - **Done when:** editing the UI or Electron shell, then taking a restart, leaves the
   conversation and terminal exactly as they were — no lost turn, no wiped transcript.
 
+### Data & persistence — decided
+
+- **Local-first SQLite** (`better-sqlite3`) is the single persistence backbone: transcript,
+  terminal scrollback, and session state now; the semantic-memory vector tier (via
+  `sqlite-vec`) in Phase 3. One engine that grows with the roadmap, not three.
+- **No cloud runtime dependency.** Reads/writes hit the embedded file directly — synchronous,
+  instant, and fully offline. The whole point is surviving a *local* restart fast; a network
+  hop would defeat it.
+- **Cloud is optional and later**, only for backup or multi-device sync — bolted on as a sync
+  layer (libSQL/Turso embedded replica, or Litestream → S3) without changing local-first
+  access. The `memory/` fact tier is already cloud-backed via git on GitHub.
+- **Portability.** Moving to a new machine = pull the repo + copy one SQLite file (it lives
+  under `userData` in packaged builds, outside the repo). No server to migrate, no
+  export/import. With the optional sync layer added, even the file-copy disappears — the new
+  machine logs in and pulls. The SQLite file stays **out of git** (binary diffs/merge noise);
+  the human-readable `memory/` facts stay git-tracked.
+
 ## Phase 0 — Foundation hardening 🔴
 *Make the existing mind unshakeable before we pile on.*
 
