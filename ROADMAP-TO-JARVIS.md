@@ -80,6 +80,20 @@ mind didn't fully forget.
 - **Done when:** editing the UI or Electron shell, then taking a restart, leaves the
   conversation and terminal exactly as they were — no lost turn, no wiped transcript.
 
+**Status — graceful restart (level 1): DONE & running.** `src/main/store.ts` is the live
+SQLite backbone; the transcript, in-flight turn, and rolling-capped terminal scrollback all
+persist and restore. Verified running in dev (new messages commit to SQLite). The sidecar
+brain (level 2) remains future work, slated alongside Phase 6.
+
+**Known issues:**
+- *Migration-guard ordering bug (low priority).* The one-time localStorage→SQLite transcript
+  migration in `App.tsx` is gated on "SQLite is empty", but `electron-vite dev` auto-restarts
+  on every `src/main` save, so an earlier boot (backbone landed, migration not yet) committed
+  a greeting into SQLite — leaving it non-empty and short-circuiting the migration. Fix: gate
+  on "no *user* messages yet" (or "contains only a single auto-greeting") instead of "empty",
+  so a seeded greeting doesn't block the import. Largely moot now (the real transcript was
+  ported directly), but worth correcting so the path is sound.
+
 ### Data & persistence — decided
 
 - **Local-first SQLite** (`better-sqlite3`) is the single persistence backbone: transcript,
@@ -97,10 +111,10 @@ mind didn't fully forget.
   machine logs in and pulls. The SQLite file stays **out of git** (binary diffs/merge noise);
   the human-readable `memory/` facts stay git-tracked.
 
-## Phase 0 — Foundation hardening 🔴
+## Phase 0 — Foundation hardening 🔴  ← *active*
 *Make the existing mind unshakeable before we pile on.*
 
-- Wire **`src/main/memory.ts` into the agent loop** — `buildSystemAppend` should load the memory index + facts, not just `ARTEMIS.md`. (Currently the store is written but never read back into context.)
+- ⏳ Wire **`src/main/memory.ts` into the agent loop** — `buildSystemAppend` should load the memory index + facts, not just `ARTEMIS.md`. (Currently the store is written but never read back into context.) **← in progress**
 - Give Artemis **first-class memory tools** (`save_memory` / `recall_memory`) so it curates its own memory deliberately, mid-conversation.
 - Harden session resume: surface session/cost in the UI, add a "new conversation" control.
 - Error & auth UX: clearer states when the key/login is missing.
