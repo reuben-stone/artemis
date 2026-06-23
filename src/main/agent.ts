@@ -6,6 +6,7 @@ import { promises as fs } from 'fs'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { getApiKey } from './secrets'
 import { saveTurn, loadLastTurn, markTurnClaimed, appendMessage } from './store'
+import { loadMemory } from './memory'
 
 /**
  * Artemis's mind: the Claude Agent SDK agentic loop.
@@ -60,6 +61,28 @@ async function buildSystemAppend(): Promise<string> {
   } catch {
     parts.push('Your name is Artemis. You are a Claude-based operator.')
   }
+
+  // Persistent memory (Phase 0): load the markdown fact store so the operator actually
+  // *uses* what it knows about the user and their projects — not just writes to it.
+  try {
+    const { index, facts } = await loadMemory()
+    if (facts.length) {
+      parts.push(
+        [
+          'PERSISTENT MEMORY — durable facts you saved across past sessions. Treat them as',
+          'background knowledge about the user and their projects: rely on them, but if one',
+          'names a file/flag/function, verify it still exists before acting on it.',
+          '',
+          index.trim(),
+          '',
+          facts.map((f) => f.trim()).join('\n\n---\n\n')
+        ].join('\n')
+      )
+    }
+  } catch {
+    // no memory store yet — fine, the operator simply has nothing saved
+  }
+
   // Spoken summary: the chat shows the full answer; the voice should be conversational.
   parts.push(
     [
@@ -69,6 +92,19 @@ async function buildSystemAppend(): Promise<string> {
       `${SAY_MARKER} Done — I trimmed the voice down to a quick summary and smoothed out the chat. Want me to try it live?`
     ].join('\n')
   )
+
+  // Chat formatting: the on-screen answer renders as markdown with single line breaks
+  // preserved, so structure multi-point replies for the eye.
+  parts.push(
+    [
+      'CHAT FORMATTING — the on-screen answer renders as GitHub-flavoured markdown with',
+      'single line breaks preserved. When a reply makes several points, put each on its own',
+      'line or as a short bulleted list ("- ") instead of running them together as a',
+      'paragraph of sentences. Keep it scannable. This applies to the on-screen text only,',
+      `never to the spoken ${SAY_MARKER} line.`
+    ].join('\n')
+  )
+
   return parts.join('\n\n')
 }
 
