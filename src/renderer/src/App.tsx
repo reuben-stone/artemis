@@ -12,6 +12,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
   const [voiceOn, setVoiceOn] = useState(true)
+  const [showTerminal, setShowTerminal] = useState(false) // hidden until toggled
   const [autoLaunch, setAutoLaunch] = useState(false) // defaults off
   const [needsKey, setNeedsKey] = useState(false)
   const [permission, setPermission] = useState<PermissionReq | null>(null)
@@ -90,13 +91,17 @@ export default function App() {
         setTimeout(() => setState('idle'), 2500)
       }
     })
-    return off
+    return () => {
+      off?.()
+    }
   }, [speak])
 
   // permission requests from the operator's tool calls
   useEffect(() => {
     const off = window.artemis?.agent?.onPermission((req) => setPermission(req))
-    return off
+    return () => {
+      off?.()
+    }
   }, [])
 
   const respondPermission = (allow: boolean) => {
@@ -153,6 +158,13 @@ export default function App() {
       <header className="titlebar">
         <span className="brand">◈ ARTEMIS</span>
         <div className="titlebar-right">
+          <button
+            className={`term-toggle ${showTerminal ? 'on' : ''}`}
+            onClick={() => setShowTerminal((v) => !v)}
+            title={showTerminal ? 'Hide terminal' : 'Show terminal'}
+          >
+            {'>_'}
+          </button>
           {voices.length > 0 && (
             <select
               className="voice-select"
@@ -186,15 +198,27 @@ export default function App() {
           <Orb state={state} amplitudeRef={amplitudeRef} />
         </section>
         <section className="side-col">
-          <div className="term-pane">
-            <div className="pane-label">TERMINAL</div>
-            <TerminalPane />
-          </div>
+          {showTerminal && (
+            <div className="term-pane">
+              <div className="pane-label">
+                TERMINAL
+                <button
+                  className="pane-close"
+                  onClick={() => setShowTerminal(false)}
+                  title="Hide terminal"
+                >
+                  ✕
+                </button>
+              </div>
+              <TerminalPane />
+            </div>
+          )}
           <div className="chat-pane">
             <div className="pane-label">ARTEMIS</div>
             <Chat
               messages={messages}
               busy={busy}
+              state={state}
               voiceOn={voiceOn}
               onToggleVoice={toggleVoice}
               onSend={send}
