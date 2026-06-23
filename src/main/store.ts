@@ -1,0 +1,184 @@
+import { app } from 'electron'
+import { join } from 'path'
+import Database from 'better-sqlite3'
+
+/**
+ * Artemis's local-first persistence backbone (SQLite).
+ *
+ * Holds the durable transcript, an in-flight turn buffer (so a mid-answer restart
+ * recovers), and a rolling terminal scrollback. It lives as a single file under the OS
+ * userData dir — deliberately *outside* the repo (kept out of git), portable by copying
+ * that one file. This is the substrate the Phase 3 semantic-memory tier (sqlite-vec)
+ * will extend; see ROADMAP-TO-JARVIS.md.
+ *
+ * Why SQLite over the old localStorage transcript: no ~5MB quota ceiling (months of
+ * conversation silently stopped persisting once localStorage filled), it's queryable,
+ * and reads/writes are synchronous — exactly what makes restart-restore instant.
+ *
+ * Growth is bounded by design: we load only the recent slice for display, never replay
+ * the whole DB into the model's context, and cap the terminal scrollback.
+ */
+
+export interface StoredMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+export interface StoredTurn {
+  requestId: string
+  text: string
+  done: string | null
+  speech: string
+  error: string | null
+  state: string
+  claimed: boolean
+}
+
+const TERMINAL_CAP_BYTES = 256 * 1024 // rolling scrollback ceiling
+const TURN_HISTORY = 20 // keep only the most recent turns for recovery
+
+let db: Database.Database | null = null
+
+function getDb(): Database.Database {
+  if (db) return db
+  const file = join(app.getPath('userData'), 'artemis.db')
+  db = new Database(file)
+  db.pragma('journal_mode = WAL')
+  db.pragma('synchronous = NORMAL')
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      role TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(id);
+
+    CREATE TABLE IF NOT EXISTS turns (
+      request_id TEXT PRIMARY KEY,
+      text TEXT NOT NULL DEFAULT '',
+      done TEXT,
+      speech TEXT NOT NULL DEFAULT '',
+      error TEXT,
+      state TEXT NOT NULL DEFAULT 'thinking',
+      claimed INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS terminal (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      data TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `)
+  return db
+}
+
+// --- transcript ---------------------------------------------------------------
+
+/** Append one committed message to the durable transcript. */
+export function appendMessage(role: 'user' | 'assistant', text: string): void {
+  getDb()
+    .prepare('INSERT INTO messages (role, text, created_at) VALUES (?, ?, ?)')
+    .run(role, text, Date.now())
+}
+
+/** Load the most recent `limit` messages, oldest-first (for display on boot). */
+export function loadRecentMessages(limit = 200): StoredMessage[] {
+  return getDb()
+    .prepare(
+      `SELECT role, text FROM (
+         SELECT id, role, text FROM messages ORDER BY id DESC LIMIT ?
+       ) ORDER BY id ASC`
+    )
+    .all(limit) as StoredMessage[]
+}
+
+// --- in-flight turn (durable across a full restart) ---------------------------
+
+/** Upsert the live turn so a mid-answer restart can recover it. */
+export function saveTurn(t: StoredTurn): void {
+  const d = getDb()
+  d.prepare(
+    `INSERT INTO turns (request_id, text, done, speech, error, state, claimed, created_at)
+     VALUES (@requestId, @text, @done, @speech, @error, @state, @claimed, @createdAt)
+     ON CONFLICT(request_id) DO UPDATE SET
+       text=excluded.text, done=excluded.done, speech=excluded.speech,
+       error=excluded.error, state=excluded.state, claimed=excluded.claimed`
+  ).run({
+    requestId: t.requestId,
+    text: t.text,
+    done: t.done,
+    speech: t.speech,
+    error: t.error,
+    state: t.state,
+    claimed: t.claimed ? 1 : 0,
+    createdAt: Date.now()
+  })
+  // keep the table tiny — recovery only ever needs the latest turn
+  d.prepare(
+    `DELETE FROM turns WHERE request_id NOT IN (
+       SELECT request_id FROM turns ORDER BY created_at DESC LIMIT ?
+     )`
+  ).run(TURN_HISTORY)
+}
+
+/** The most recently active turn, or null. Used to recover after a full restart. */
+export function loadLastTurn(): StoredTurn | null {
+  const row = getDb()
+    .prepare('SELECT * FROM turns ORDER BY created_at DESC LIMIT 1')
+    .get() as Record<string, unknown> | undefined
+  if (!row) return null
+  return {
+    requestId: row.request_id as string,
+    text: row.text as string,
+    done: (row.done as string) ?? null,
+    speech: row.speech as string,
+    error: (row.error as string) ?? null,
+    state: row.state as string,
+    claimed: !!row.claimed
+  }
+}
+
+export function markTurnClaimed(requestId: string): void {
+  getDb().prepare('UPDATE turns SET claimed = 1 WHERE request_id = ?').run(requestId)
+}
+
+// --- terminal scrollback (rolling cap) ----------------------------------------
+
+/** Persist a chunk of terminal output, trimming oldest chunks past the cap. */
+export function appendTerminal(data: string): void {
+  if (!data) return
+  const d = getDb()
+  d.prepare('INSERT INTO terminal (data, bytes, created_at) VALUES (?, ?, ?)').run(
+    data,
+    Buffer.byteLength(data, 'utf8'),
+    Date.now()
+  )
+  const total = (d.prepare('SELECT COALESCE(SUM(bytes), 0) AS s FROM terminal').get() as { s: number }).s
+  if (total > TERMINAL_CAP_BYTES) {
+    const rows = d.prepare('SELECT id, bytes FROM terminal ORDER BY id ASC').all() as Array<{
+      id: number
+      bytes: number
+    }>
+    let running = total
+    const drop: number[] = []
+    for (const r of rows) {
+      if (running <= TERMINAL_CAP_BYTES) break
+      drop.push(r.id)
+      running -= r.bytes
+    }
+    if (drop.length) {
+      d.prepare(`DELETE FROM terminal WHERE id IN (${drop.map(() => '?').join(',')})`).run(...drop)
+    }
+  }
+}
+
+/** The retained terminal scrollback, oldest-first, ready to replay into xterm. */
+export function loadTerminalScrollback(): string {
+  const rows = getDb().prepare('SELECT data FROM terminal ORDER BY id ASC').all() as Array<{
+    data: string
+  }>
+  return rows.map((r) => r.data).join('')
+}

@@ -37,6 +37,7 @@ export default function Chat({
   // whether the view is pinned to the bottom; when false the user has
   // scrolled up and we must NOT yank them back down mid-stream.
   const stick = useRef(true)
+  const lastTouchY = useRef(0)
   const [showJump, setShowJump] = useState(false)
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
@@ -47,17 +48,36 @@ export default function Chat({
     setShowJump(false)
   }
 
-  // follow new content only while pinned to the bottom
+  // Follow new content only while pinned to the bottom. Instant ('auto') is
+  // deliberate: a smooth catch-up animation emits its own scroll events trending
+  // toward the bottom, which would re-pin the view right after the user scrolled
+  // up. Instant follow emits a single event at the bottom and nothing to fight.
   useLayoutEffect(() => {
     if (stick.current) scrollToBottom('auto')
   }, [messages])
+
+  // Detaching from the bottom is driven by user *intent* (an upward wheel/touch
+  // gesture), not by scroll position. While streaming we re-pin every frame, so a
+  // position-based check would undo a small upward scroll before it registered.
+  // Re-attaching is position-based: once the user returns to the bottom, resume.
+  const detachIfScrollingUp = (deltaY: number) => {
+    if (deltaY < 0 && stick.current) {
+      stick.current = false
+      setShowJump(true)
+    }
+  }
 
   const onScroll = () => {
     const el = scrollRef.current
     if (!el) return
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-    stick.current = distance < 80
-    setShowJump(!stick.current)
+    if (distance < 8) {
+      // back at the bottom — resume following
+      stick.current = true
+      setShowJump(false)
+    } else if (!stick.current) {
+      setShowJump(true)
+    }
   }
 
   // grow the textarea with its content, up to the CSS max-height
@@ -83,7 +103,21 @@ export default function Chat({
 
   return (
     <div className="chat">
-      <div className="chat-log" ref={scrollRef} onScroll={onScroll}>
+      <div
+        className="chat-log"
+        ref={scrollRef}
+        onScroll={onScroll}
+        onWheel={(e) => detachIfScrollingUp(e.deltaY)}
+        onTouchStart={(e) => {
+          lastTouchY.current = e.touches[0]?.clientY ?? 0
+        }}
+        onTouchMove={(e) => {
+          const y = e.touches[0]?.clientY ?? 0
+          // finger dragging down reveals earlier content (an upward scroll)
+          detachIfScrollingUp(lastTouchY.current - y)
+          lastTouchY.current = y
+        }}
+      >
         {messages.length === 0 && (
           <div className="chat-empty">Ask Artemis to operate on your projects…</div>
         )}

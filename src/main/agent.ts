@@ -5,6 +5,7 @@ import { homedir } from 'os'
 import { promises as fs } from 'fs'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { getApiKey } from './secrets'
+import { saveTurn, loadLastTurn, markTurnClaimed, appendMessage } from './store'
 
 /**
  * Artemis's mind: the Claude Agent SDK agentic loop.
@@ -133,14 +134,36 @@ async function saveSessionId(id: string): Promise<void> {
  *   re-apply a stale answer over a transcript that's already up to date.
  */
 export function getResyncTurn(): TurnBuffer | null {
-  if (!lastTurnId) return null
-  const t = turns.get(lastTurnId)
-  if (!t) return null
-  if (t.done !== null || t.error !== null) {
-    if (t.claimed) return null
-    t.claimed = true
+  // Fast path: main is still alive (a renderer hot-reload). The live turn may still
+  // be streaming, so leave `done` null and let the renderer keep following events.
+  if (lastTurnId) {
+    const t = turns.get(lastTurnId)
+    if (t) {
+      if (t.done !== null || t.error !== null) {
+        if (t.claimed) return null
+        t.claimed = true
+      }
+      return t
+    }
   }
-  return t
+  // Slow path: the in-memory buffer is empty, so the main process restarted (a
+  // src/main rebuild). Recover the last turn from disk. A turn left unclaimed here
+  // never finished — its SDK stream died with the old process — so present whatever
+  // partial text we captured as a settled answer (done set) rather than hanging the
+  // UI in "busy", and commit it so it isn't lost on the next boot.
+  const stored = loadLastTurn()
+  if (!stored || stored.claimed || !stored.text.trim()) return null
+  markTurnClaimed(stored.requestId)
+  appendMessage('assistant', stored.text)
+  return {
+    requestId: stored.requestId,
+    text: stored.text,
+    done: stored.text,
+    speech: stored.speech,
+    error: null,
+    state: 'idle',
+    claimed: true
+  }
 }
 
 /**
@@ -166,6 +189,10 @@ export async function runAgent(
   }
   turns.set(requestId, turn)
   lastTurnId = requestId
+  saveTurn(turn) // durable from the first moment, so a restart mid-answer can recover
+  // throttle cursor: we persist streaming text at most every ~700ms (tokens arrive
+  // far faster than we need to checkpoint them to disk)
+  let lastPersist = 0
   // keep the buffer bounded — drop the oldest finished turns
   if (turns.size > 8) {
     for (const [id, t] of turns) {
@@ -240,6 +267,11 @@ export async function runAgent(
             full += ev.delta.text
             turn.text = full
             send({ token: ev.delta.text })
+            const now = Date.now()
+            if (now - lastPersist > 700) {
+              lastPersist = now
+              saveTurn(turn)
+            }
           }
         } else if (message.type === 'assistant') {
           // surface tool use as "executing" state
@@ -252,9 +284,15 @@ export async function runAgent(
             const { display, speech } = splitSpeech((message.result ?? full).trim())
             turn.done = display
             turn.speech = speech
+            turn.claimed = true
+            appendMessage('assistant', display) // commit to the durable transcript
+            saveTurn(turn)
             send({ done: display, speech, cost: message.total_cost_usd })
           } else {
             turn.error = `Stopped: ${message.subtype}`
+            turn.claimed = true
+            appendMessage('assistant', `⚠️ ${turn.error}`)
+            saveTurn(turn)
             send({ error: turn.error, state: 'error' })
           }
         }
@@ -272,6 +310,9 @@ export async function runAgent(
       turn.error = isAuth
         ? 'Not authenticated. Log into Claude Code (run `claude` once), or add an API key in settings.'
         : msg
+      turn.claimed = true
+      appendMessage('assistant', `⚠️ ${turn.error}`)
+      saveTurn(turn)
       send({ error: turn.error, state: 'error' })
       return 'ok'
     }

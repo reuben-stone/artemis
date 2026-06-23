@@ -8,9 +8,10 @@ import { useVoice } from './hooks/useVoice'
 import { NAME } from './agent/identity'
 import { splitSpeech, speechFallback } from './agent/speech'
 
-// The transcript is mirrored to localStorage so a renderer reload — which happens
-// every time Artemis hot-reloads its own UI — doesn't wipe the conversation.
-const STORAGE_KEY = 'artemis.transcript.v1'
+// The transcript lives in the durable SQLite backbone (main process), so it survives
+// both a renderer hot-reload and a full restart — and isn't capped by localStorage's
+// ~5MB quota. The renderer commits its own messages (user input, greeting,
+// remember-acks); the operator commits assistant replies from main.
 
 export default function App() {
   const [state, setState] = useState<OrbState>('idle')
@@ -68,24 +69,20 @@ export default function App() {
     window.artemis?.app?.getAutoLaunch().then(setAutoLaunch)
   }, [])
 
-  // Restore the transcript across reloads; only greet on a genuinely fresh start.
+  // Restore the transcript from the SQLite backbone; only greet on a genuinely fresh
+  // start. Then reattach to any turn that was in flight when we (re)loaded.
   useEffect(() => {
-    let restored: Message[] | null = null
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      const parsed = raw ? JSON.parse(raw) : null
-      if (Array.isArray(parsed) && parsed.length) restored = parsed
-    } catch {
-      // corrupt/absent store — fall through to a fresh greeting
-    }
-
-    if (restored) {
-      setMessages(restored)
-      reattachInFlight()
-      return
-    }
-
-    window.artemis?.memory?.load().then(({ facts }) => {
+    let cancelled = false
+    ;(async () => {
+      const restored = (await window.artemis?.history?.load()) ?? []
+      if (cancelled) return
+      if (restored.length) {
+        setMessages(restored as Message[])
+        reattachInFlight()
+        return
+      }
+      const { facts } = (await window.artemis?.memory?.load()) ?? { facts: [] }
+      if (cancelled) return
       const greeting =
         facts.length > 0
           ? `Welcome back. I'm ${NAME} — I remember ${facts.length} thing${
@@ -93,23 +90,14 @@ export default function App() {
             } from past sessions. What are we working on?`
           : `I'm ${NAME}, your operator. I run on your Claude subscription and can read, edit, and rebuild my own code. What should we do?`
       setMessages([{ role: 'assistant', text: greeting }])
+      window.artemis?.history?.append('assistant', greeting)
       if (voiceOnRef.current) setTimeout(() => speak(greeting), 400)
-    })
+    })()
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Persist the transcript (debounced so a token burst doesn't thrash localStorage).
-  useEffect(() => {
-    if (!messages.length) return
-    const id = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
-      } catch {
-        // quota/serialization failure — non-fatal, the live transcript is unaffected
-      }
-    }, 200)
-    return () => clearTimeout(id)
-  }, [messages])
 
   // If a turn was streaming when the renderer reloaded, the main process kept it
   // alive — re-adopt its requestId so events flow again and recover what we missed.
@@ -203,6 +191,7 @@ export default function App() {
       if (mem && window.artemis?.memory) {
         const fact = mem[1].trim()
         setMessages((m) => [...m, { role: 'user', text }])
+        window.artemis?.history?.append('user', text)
         await window.artemis.memory.save({
           name: fact.split(/\s+/).slice(0, 6).join('-'),
           description: fact.slice(0, 80),
@@ -211,14 +200,17 @@ export default function App() {
         })
         const ack = `Saved to memory — I'll remember that across sessions.`
         setMessages((m) => [...m, { role: 'assistant', text: ack }])
+        window.artemis?.history?.append('assistant', ack)
         setState('idle')
         if (voiceOn) speak(ack)
         setBusy(false)
         return
       }
 
-      // hand the turn to the real operator
+      // hand the turn to the real operator. Commit the user message now; the operator
+      // commits its assistant reply from main when the turn completes.
       setMessages((m) => [...m, { role: 'user', text }, { role: 'assistant', text: '' }])
+      window.artemis?.history?.append('user', text)
       acc.current = ''
       const requestId = `r${reqCounter.current++}`
       activeReq.current = requestId

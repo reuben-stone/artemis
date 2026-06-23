@@ -94,14 +94,19 @@ html, body, #root {
   flex-direction: column;
   border-right: 1px solid var(--border);
   min-height: 0;
+  min-width: 0;
 }
 .orb-pane > div { flex: 1; min-height: 0; } /* the Canvas */
 
-/* right: terminal stacked over chat */
+/* right: terminal stacked over chat.
+   min-width:0 is essential at every link in this chain — a grid/flex item
+   defaults to min-width:auto and won't shrink below its content's intrinsic
+   width, so one long code line would widen the track and bleed past the edge. */
 .side-col {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 .term-pane {
   flex: 1 1 50%;
@@ -109,6 +114,7 @@ html, body, #root {
   flex-direction: column;
   background: #080a12;
   min-height: 0;
+  min-width: 0;
 }
 .chat-pane {
   flex: 1 1 50%;
@@ -116,6 +122,7 @@ html, body, #root {
   flex-direction: column;
   border-top: 1px solid var(--border);
   min-height: 0;
+  min-width: 0;
 }
 .pane-label {
   font-size: 10px;
@@ -144,6 +151,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   position: relative;
 }
 .chat-log {
@@ -155,7 +163,9 @@ html, body, #root {
   flex-direction: column;
   gap: 16px;
   min-height: 0;
-  scroll-behavior: smooth;
+  /* no scroll-behavior:smooth here — the streaming auto-follow must be instant so
+     it doesn't emit its own scroll events and fight a user who scrolled up. The
+     jump-to-latest button still animates via its explicit scrollTo({behavior}). */
 }
 .chat-log::-webkit-scrollbar { width: 8px; }
 .chat-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
@@ -167,6 +177,7 @@ html, body, #root {
   display: flex;
   gap: 10px;
   max-width: 100%;
+  min-width: 0;
   animation: rowIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .row.user { flex-direction: row-reverse; }
@@ -201,11 +212,18 @@ html, body, #root {
   line-height: 1.6;
   padding: 10px 14px;
   border-radius: 14px;
+  /* min-width:0 lets the bubble shrink so its scrollable children (pre/table)
+     can clip/scroll instead of forcing the row wider than the column. */
+  min-width: 0;
   max-width: calc(100% - 44px);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
+/* markdown body must also be allowed to shrink, and clip its own overflow */
+.md { min-width: 0; max-width: 100%; }
+.md table { display: block; max-width: 100%; overflow-x: auto; }
+.code-block { max-width: 100%; }
 .row.user { justify-content: flex-start; }
 .bubble.user {
   background: #3aa0ff22;

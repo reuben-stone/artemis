@@ -29,7 +29,16 @@ export default function TerminalPane() {
     const offs: Array<() => void> = []
 
     if (api) {
-      api.spawn({ cols: term.cols, rows: term.rows }).then((res) => {
+      ;(async () => {
+        // Replay persisted scrollback first so terminal history survives a restart,
+        // then start a fresh shell whose live output continues below it.
+        const sb = await api.scrollback?.()
+        if (disposed) return
+        if (sb) {
+          term.write(sb)
+          term.writeln('\r\n\x1b[90m── session restored ──\x1b[0m')
+        }
+        const res = await api.spawn({ cols: term.cols, rows: term.rows })
         if (disposed) return
         if (!res?.ok) {
           term.writeln('\x1b[33m[artemis] terminal backend unavailable.\x1b[0m')
@@ -39,7 +48,7 @@ export default function TerminalPane() {
         offs.push(api.onData((d) => term.write(d)))
         offs.push(api.onExit(() => term.writeln('\r\n\x1b[90m[process exited]\x1b[0m')))
         term.onData((d) => api.write(d))
-      })
+      })()
     } else {
       term.writeln('\x1b[33m[artemis] not running inside Electron.\x1b[0m')
     }

@@ -5,6 +5,12 @@ import { existsSync } from 'fs'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
 import { runAgent, getResyncTurn } from './agent'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
+import {
+  appendMessage,
+  loadRecentMessages,
+  appendTerminal,
+  loadTerminalScrollback
+} from './store'
 
 // node-pty is a native module; load lazily so a build issue doesn't crash boot.
 let pty: typeof import('node-pty') | null = null
@@ -45,6 +51,17 @@ function createWindow(): void {
   // One PTY per window for the visual-shell slice.
   let ptyProcess: import('node-pty').IPty | null = null
 
+  // Coalesce pty output before persisting — the shell emits many tiny chunks, and
+  // one INSERT per chunk would thrash the DB. Flush a batch every 400ms.
+  let termBuf = ''
+  let termTimer: ReturnType<typeof setTimeout> | null = null
+  const flushTerm = () => {
+    termTimer = null
+    if (!termBuf) return
+    appendTerminal(termBuf)
+    termBuf = ''
+  }
+
   ipcMain.handle('pty:spawn', (_e, opts: { cols: number; rows: number }) => {
     if (!pty) return { ok: false, reason: 'node-pty unavailable' }
     ptyProcess?.kill()
@@ -57,6 +74,8 @@ function createWindow(): void {
     })
     ptyProcess.onData((data) => {
       if (!win.isDestroyed()) win.webContents.send('pty:data', data)
+      termBuf += data
+      if (!termTimer) termTimer = setTimeout(flushTerm, 400)
     })
     ptyProcess.onExit(() => {
       if (!win.isDestroyed()) win.webContents.send('pty:exit')
@@ -69,7 +88,11 @@ function createWindow(): void {
     ptyProcess?.resize(size.cols, size.rows)
   )
 
-  win.on('closed', () => ptyProcess?.kill())
+  win.on('closed', () => {
+    if (termTimer) clearTimeout(termTimer)
+    flushTerm()
+    ptyProcess?.kill()
+  })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -81,6 +104,13 @@ function createWindow(): void {
 // Persistent memory IPC — available to every window.
 ipcMain.handle('memory:load', () => loadMemory())
 ipcMain.handle('memory:save', (_e, rec: MemoryRecord) => saveMemory(rec))
+
+// Durable transcript + terminal scrollback (SQLite backbone).
+ipcMain.handle('history:load', (_e, limit?: number) => loadRecentMessages(limit ?? 200))
+ipcMain.handle('history:append', (_e, { role, text }: { role: 'user' | 'assistant'; text: string }) =>
+  appendMessage(role, text)
+)
+ipcMain.handle('terminal:scrollback', () => loadTerminalScrollback())
 
 // --- Operator (Agent SDK) IPC ---
 let permCounter = 0

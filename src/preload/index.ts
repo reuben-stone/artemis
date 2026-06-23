@@ -16,7 +16,19 @@ const api = {
       const handler = () => cb()
       ipcRenderer.on('pty:exit', handler)
       return () => ipcRenderer.removeListener('pty:exit', handler)
-    }
+    },
+    // Persisted scrollback, replayed into a freshly-mounted terminal so history
+    // survives a restart.
+    scrollback: (): Promise<string> => ipcRenderer.invoke('terminal:scrollback')
+  },
+  // Durable transcript backbone (SQLite in main). The renderer commits its own
+  // messages (user input, greeting, remember-acks); the operator commits assistant
+  // replies from main. Both read back here on boot.
+  history: {
+    load: (limit?: number): Promise<{ role: 'user' | 'assistant'; text: string }[]> =>
+      ipcRenderer.invoke('history:load', limit),
+    append: (role: 'user' | 'assistant', text: string): Promise<void> =>
+      ipcRenderer.invoke('history:append', { role, text })
   },
   memory: {
     load: (): Promise<{ index: string; facts: string[] }> =>
