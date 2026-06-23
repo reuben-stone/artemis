@@ -163,8 +163,21 @@ html, body, #root {
 .chat-empty { color: var(--muted); font-size: 13px; text-align: center; margin: auto; }
 
 /* message rows: avatar + bubble, user aligned right */
-.row { display: flex; gap: 10px; max-width: 100%; }
+.row {
+  display: flex;
+  gap: 10px;
+  max-width: 100%;
+  animation: rowIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
 .row.user { flex-direction: row-reverse; }
+/* new rows ease up into place instead of snapping in mid-stream */
+@keyframes rowIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row { animation: none; }
+}
 .avatar {
   flex: 0 0 auto;
   width: 26px;

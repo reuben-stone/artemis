@@ -42,12 +42,23 @@ const api = {
   agent: {
     run: (requestId: string, prompt: string): Promise<void> =>
       ipcRenderer.invoke('agent:run', { requestId, prompt }),
+    // Ask main whether a turn was streaming when the renderer reloaded, so the
+    // fresh page can re-attach instead of dropping the answer.
+    resync: (): Promise<null | {
+      requestId: string
+      text: string
+      done: string | null
+      speech: string
+      error: string | null
+      state: string
+    }> => ipcRenderer.invoke('agent:resync'),
     onEvent: (
       cb: (e: {
         requestId: string
         state?: string
         token?: string
         done?: string
+        speech?: string
         error?: string
         cost?: number
       }) => void

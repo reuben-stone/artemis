@@ -3,7 +3,7 @@ import { join } from 'path'
 import os from 'os'
 import { existsSync } from 'fs'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent } from './agent'
+import { runAgent, getResyncTurn } from './agent'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 
 // node-pty is a native module; load lazily so a build issue doesn't crash boot.
@@ -105,6 +105,10 @@ ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prom
     })
   return runAgent(win, requestId, prompt, ask)
 })
+
+// After a renderer reload (e.g. a hot-reload of Artemis's own UI) the new page asks
+// the main process whether a turn was in flight, and re-attaches to it.
+ipcMain.handle('agent:resync', () => getResyncTurn())
 
 // --- Auth IPC ---
 ipcMain.handle('auth:status', async () => ({

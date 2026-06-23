@@ -6,6 +6,11 @@ import PermissionDialog, { type PermissionReq } from './components/PermissionDia
 import KeySetup from './components/KeySetup'
 import { useVoice } from './hooks/useVoice'
 import { NAME } from './agent/identity'
+import { splitSpeech, speechFallback } from './agent/speech'
+
+// The transcript is mirrored to localStorage so a renderer reload — which happens
+// every time Artemis hot-reloads its own UI — doesn't wipe the conversation.
+const STORAGE_KEY = 'artemis.transcript.v1'
 
 export default function App() {
   const [state, setState] = useState<OrbState>('idle')
@@ -31,6 +36,26 @@ export default function App() {
   const activeReq = useRef<string | null>(null)
   const acc = useRef('')
   const reqCounter = useRef(0)
+  // Tokens arrive faster than we want to re-render markdown; coalesce a burst into
+  // a single paint per animation frame so the transcript streams smoothly.
+  const flushRaf = useRef<number | null>(null)
+
+  const flushStream = useCallback(() => {
+    flushRaf.current = null
+    const display = splitSpeech(acc.current).display
+    setMessages((m) => {
+      const next = [...m]
+      next[next.length - 1] = { role: 'assistant', text: display }
+      return next
+    })
+  }, [])
+
+  const cancelFlush = useCallback(() => {
+    if (flushRaf.current != null) {
+      cancelAnimationFrame(flushRaf.current)
+      flushRaf.current = null
+    }
+  }, [])
 
   // auth: subscription-first. Only force key setup if neither is present.
   useEffect(() => {
@@ -43,8 +68,23 @@ export default function App() {
     window.artemis?.app?.getAutoLaunch().then(setAutoLaunch)
   }, [])
 
-  // greet using persistent memory
+  // Restore the transcript across reloads; only greet on a genuinely fresh start.
   useEffect(() => {
+    let restored: Message[] | null = null
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      const parsed = raw ? JSON.parse(raw) : null
+      if (Array.isArray(parsed) && parsed.length) restored = parsed
+    } catch {
+      // corrupt/absent store — fall through to a fresh greeting
+    }
+
+    if (restored) {
+      setMessages(restored)
+      reattachInFlight()
+      return
+    }
+
     window.artemis?.memory?.load().then(({ facts }) => {
       const greeting =
         facts.length > 0
@@ -58,6 +98,50 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Persist the transcript (debounced so a token burst doesn't thrash localStorage).
+  useEffect(() => {
+    if (!messages.length) return
+    const id = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
+      } catch {
+        // quota/serialization failure — non-fatal, the live transcript is unaffected
+      }
+    }, 200)
+    return () => clearTimeout(id)
+  }, [messages])
+
+  // If a turn was streaming when the renderer reloaded, the main process kept it
+  // alive — re-adopt its requestId so events flow again and recover what we missed.
+  const reattachInFlight = useCallback(() => {
+    window.artemis?.agent?.resync().then((turn) => {
+      if (!turn) return
+      acc.current = turn.text
+      activeReq.current = turn.requestId
+      const text = turn.error
+        ? `⚠️ ${turn.error}`
+        : turn.done ?? splitSpeech(turn.text).display
+      setMessages((m) => {
+        const next = [...m]
+        const last = next[next.length - 1]
+        if (last && last.role === 'assistant') next[next.length - 1] = { role: 'assistant', text }
+        else next.push({ role: 'assistant', text })
+        return next
+      })
+      if (turn.done !== null || turn.error !== null) {
+        // turn already finished mid-reload — settle the UI
+        activeReq.current = null
+        setBusy(false)
+        setState(turn.error ? 'error' : 'idle')
+      } else {
+        // still streaming — keep busy and let the event listener carry it home
+        setBusy(true)
+        setState((turn.state as OrbState) || 'thinking')
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // single subscription to the operator's event stream
   useEffect(() => {
     const off = window.artemis?.agent?.onEvent((e) => {
@@ -65,25 +149,26 @@ export default function App() {
       if (e.state) setState(e.state as OrbState)
       if (e.token) {
         acc.current += e.token
-        setMessages((m) => {
-          const next = [...m]
-          next[next.length - 1] = { role: 'assistant', text: acc.current }
-          return next
-        })
+        if (flushRaf.current == null) flushRaf.current = requestAnimationFrame(flushStream)
       }
       if (e.done !== undefined) {
-        const finalText = e.done || acc.current
+        cancelFlush()
+        // `e.done` is already marker-stripped by main; acc may still hold the raw
+        // stream, so derive both display and spoken line defensively.
+        const display = e.done || splitSpeech(acc.current).display
+        const spoken = e.speech || splitSpeech(acc.current).speech || speechFallback(display)
         setMessages((m) => {
           const next = [...m]
-          next[next.length - 1] = { role: 'assistant', text: finalText }
+          next[next.length - 1] = { role: 'assistant', text: display }
           return next
         })
-        if (voiceOnRef.current && finalText) speak(finalText)
+        if (voiceOnRef.current && spoken) speak(spoken)
         else setState('idle')
         setBusy(false)
         activeReq.current = null
       }
       if (e.error) {
+        cancelFlush()
         setMessages((m) => [...m, { role: 'assistant', text: `⚠️ ${e.error}` }])
         setState('error')
         setBusy(false)
@@ -94,7 +179,7 @@ export default function App() {
     return () => {
       off?.()
     }
-  }, [speak])
+  }, [speak, flushStream, cancelFlush])
 
   // permission requests from the operator's tool calls
   useEffect(() => {
