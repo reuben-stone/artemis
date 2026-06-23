@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 import type { OrbState } from './Orb'
 
 export interface Message {
@@ -131,7 +132,10 @@ export default function Chat({
               <div className={`bubble ${m.role}`}>
                 {m.role === 'assistant' ? (
                   <div className="md">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkBreaks]}
+                      components={mdComponents}
+                    >
                       {m.text}
                     </ReactMarkdown>
                     {isStreamingBubble && <span className="caret" />}
