@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import Orb, { type OrbState } from './components/Orb'
 import TerminalPane from './components/TerminalPane'
-import Chat, { type Message, type OutImage } from './components/Chat'
+import Chat, { type Message, type OutMedia } from './components/Chat'
 import PermissionDialog, { type PermissionReq } from './components/PermissionDialog'
 import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
@@ -447,7 +447,7 @@ export default function App() {
   }, [])
 
   const send = useCallback(
-    async (text: string, images?: OutImage[]) => {
+    async (text: string, media?: OutMedia[]) => {
       setBusy(true)
 
       // Memory intent is the model's job, not a UI keyword match: it has save_memory
@@ -459,14 +459,19 @@ export default function App() {
       // runs — committing it here too would double-send it into the model's context.
       setMessages((m) => [
         ...m,
-        { role: 'user', text, images: images?.map((i) => i.dataUrl) },
+        {
+          role: 'user',
+          text,
+          images: media?.filter((i) => i.kind === 'image').map((i) => i.dataUrl),
+          docs: media?.filter((i) => i.kind === 'document').map((i) => i.name)
+        },
         { role: 'assistant', text: '' }
       ])
       acc.current = ''
       const requestId = `r${reqCounter.current++}`
       activeReq.current = requestId
-      // Strip the display-only dataUrl before crossing IPC; main only needs base64 + type.
-      const payload = images?.map((i) => ({ mediaType: i.mediaType, data: i.data }))
+      // Strip the display-only dataUrl/name before crossing IPC; main needs base64 + type.
+      const payload = media?.map((i) => ({ kind: i.kind, mediaType: i.mediaType, data: i.data }))
       await window.artemis?.agent?.run(requestId, text, payload)
     },
     []

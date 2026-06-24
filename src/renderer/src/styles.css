@@ -1273,6 +1273,17 @@ html, body, #root {
   border-radius: 8px;
   border: 1px solid var(--border);
 }
+.msg-docs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.msg-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
 
 .chat-input {
   display: flex;

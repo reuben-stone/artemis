@@ -213,8 +213,12 @@ ipcMain.handle(
     {
       requestId,
       prompt,
-      images
-    }: { requestId: string; prompt: string; images?: { mediaType: string; data: string }[] }
+      media
+    }: {
+      requestId: string
+      prompt: string
+      media?: { kind: 'image' | 'document'; mediaType: string; data: string }[]
+    }
   ) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) return
@@ -229,7 +233,7 @@ ipcMain.handle(
   const emit = (event: Record<string, unknown>): void => {
     if (!win.isDestroyed()) win.webContents.send('agent:event', event)
   }
-    return runAgent(emit, requestId, prompt, ask, images)
+    return runAgent(emit, requestId, prompt, ask, media)
   }
 )
 

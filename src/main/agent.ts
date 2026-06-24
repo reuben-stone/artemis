@@ -860,7 +860,7 @@ export async function runAgent(
   requestId: string,
   prompt: string,
   askPermission: PermissionAsker,
-  images?: { mediaType: string; data: string }[]
+  media?: { kind: 'image' | 'document'; mediaType: string; data: string }[]
 ): Promise<void> {
   const turn: TurnBuffer = {
     requestId,
@@ -908,7 +908,7 @@ export async function runAgent(
     // single time — doing both (renderer-commit + buildMessages) caused the double-send.
     const history = loadRecentMessages(60)
     // Transcript is text-only; note attachments so the persisted turn isn't blank.
-    appendMessage('user', prompt || (images?.length ? '[image attached]' : ''))
+    appendMessage('user', prompt || (media?.length ? '[attachment]' : ''))
 
     const client = await getModelClient()
     const systemPrompt = await buildSystemPrompt()
@@ -916,22 +916,30 @@ export async function runAgent(
     // Build the canonical message array: history + new user message.
     const localMessages: Anthropic.MessageParam[] = buildMessages(history, prompt)
 
-    // Attach images to the new (last) user turn as a multimodal content array, so a
+    // Attach images/PDFs to the new (last) user turn as a multimodal content array, so a
     // vision-capable model can see them. Text-file attachments were already inlined
     // into `prompt` by the renderer.
-    if (images?.length) {
+    if (media?.length) {
       const lastMsg = localMessages[localMessages.length - 1]
       const textContent = typeof lastMsg.content === 'string' ? lastMsg.content : prompt
+      const mediaBlocks: Anthropic.ContentBlockParam[] = media.map((m) =>
+        m.kind === 'document'
+          ? {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: m.data }
+            }
+          : {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: m.mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+                data: m.data
+              }
+            }
+      )
       lastMsg.content = [
         ...(textContent ? [{ type: 'text' as const, text: textContent }] : []),
-        ...images.map((img) => ({
-          type: 'image' as const,
-          source: {
-            type: 'base64' as const,
-            media_type: img.mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
-            data: img.data
-          }
-        }))
+        ...mediaBlocks
       ]
     }
 
