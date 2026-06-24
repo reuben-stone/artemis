@@ -103,7 +103,10 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
       // let Artemis speak on launch without requiring a click first
-      autoplayPolicy: 'no-user-gesture-required'
+      autoplayPolicy: 'no-user-gesture-required',
+      // keep the render loop (orb) alive when the window is unfocused/occluded —
+      // otherwise Chromium pauses rAF and the orb freezes until you click in.
+      backgroundThrottling: false
     }
   })
 

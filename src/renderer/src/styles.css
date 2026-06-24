@@ -200,7 +200,8 @@ html, body, #root {
 .ollama-field::placeholder { color: var(--muted); }
 .undo-toast {
   position: fixed;
-  bottom: 24px;
+  /* bottom-centre, but raised clear of the chat composer so it never overlaps it */
+  bottom: 88px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
