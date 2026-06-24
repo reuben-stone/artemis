@@ -1,3 +1,4 @@
+import { X, ExternalLink } from 'lucide-react'
 import type { PrReview } from '../../../preload'
 
 /**
@@ -31,7 +32,7 @@ export function PrReviewQueue({
               </button>
             )}
             <button className="projects-close" onClick={onClose} title="Close">
-              ✕
+              <X size={14} />
             </button>
           </div>
         </div>
@@ -59,7 +60,7 @@ export function PrReviewQueue({
                   rel="noreferrer"
                   title="Open the PR on GitHub"
                 >
-                  {p.title} ↗
+                  {p.title} <ExternalLink size={12} />
                 </a>
                 <div className="pr-meta">
                   <span className="pr-project">{p.project}</span>

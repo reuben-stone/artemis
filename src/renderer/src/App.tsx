@@ -7,6 +7,7 @@ import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
 import { SettingsModal } from './components/SettingsModal'
+import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X } from 'lucide-react'
 import type { Project, PrReview } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
@@ -512,7 +513,9 @@ export default function App() {
   return (
     <div className="app">
       <header className="titlebar">
-        <span className="brand">◈ ARTEMIS</span>
+        <span className="brand">
+          <Hexagon size={14} strokeWidth={2.5} /> ARTEMIS
+        </span>
         <div className="titlebar-right">
           {/* Context */}
           <button
@@ -520,16 +523,17 @@ export default function App() {
             onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
             title="Switch / manage projects"
           >
+            <FolderGit2 size={13} />
             <span className="btn-tag">PROJECT</span>
             {activeProject?.name ?? '—'}
-            <span className="btn-caret">▾</span>
+            <ChevronDown size={12} className="btn-caret" />
           </button>
           <button
             className="new-convo"
             onClick={newConversation}
             title="Start a new conversation (keeps history)"
           >
-            💬 New chat
+            <MessageSquarePlus size={14} /> New chat
           </button>
 
           <span className="titlebar-spacer" />
@@ -540,14 +544,14 @@ export default function App() {
             onClick={() => (showPrs ? setShowPrs(false) : openPrs())}
             title="PR review queue"
           >
-            ⎇ PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
+            <GitPullRequest size={14} /> PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
           </button>
           <button
             className="conn-btn"
             onClick={() => (showSettings ? setShowSettings(false) : openSettings())}
             title="Settings"
           >
-            ⚙
+            <Settings size={15} />
           </button>
 
           {/* Status */}
@@ -574,7 +578,7 @@ export default function App() {
                   onClick={() => setShowTerminal(false)}
                   title="Hide terminal"
                 >
-                  ✕
+                  <X size={13} />
                 </button>
               </div>
               <TerminalPane />

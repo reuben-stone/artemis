@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { X, CircleCheck, Circle } from 'lucide-react'
 import type { Project, ConnectionsStatus } from '../../../preload'
 
 type Tab = 'model' | 'voice' | 'connections' | 'general'
@@ -40,7 +41,7 @@ export function SettingsModal(props: {
         <div className="projects-head">
           <span>SETTINGS</span>
           <button className="projects-close" onClick={props.onClose} title="Close">
-            ✕
+            <X size={14} />
           </button>
         </div>
 
@@ -213,9 +214,12 @@ function ConnectionsTab(p: {
     window.artemis?.connections?.status().then((s) => s && setStatus(s))
   }
   useEffect(refresh, [])
-  const dot = (ok: boolean): JSX.Element => (
-    <span className={`conn-dot ${ok ? 'ok' : 'off'}`}>{ok ? '●' : '○'}</span>
-  )
+  const dot = (ok: boolean): JSX.Element =>
+    ok ? (
+      <CircleCheck size={14} className="conn-dot ok" />
+    ) : (
+      <Circle size={14} className="conn-dot off" />
+    )
 
   return (
     <div className="conn-body" style={{ padding: 0 }}>

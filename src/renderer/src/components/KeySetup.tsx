@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Hexagon } from 'lucide-react'
 
 /**
  * Shown only when Artemis can't find a Claude subscription login to inherit.
@@ -25,7 +26,9 @@ export default function KeySetup({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="keysetup">
-      <div className="brand big">◈ ARTEMIS</div>
+      <div className="brand big">
+        <Hexagon size={22} strokeWidth={2.5} /> ARTEMIS
+      </div>
       <p className="ks-lead">
         I couldn't find a Claude Code login to run on. Log into Claude Code (run{' '}
         <code>claude</code> in a terminal once) and reopen me, or paste an Anthropic

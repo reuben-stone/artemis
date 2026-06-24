@@ -33,6 +33,28 @@ html, body, #root {
 }
 .brand { color: #9b6bff; font-weight: 600; }
 .titlebar-right { display: flex; align-items: center; gap: 10px; flex: 1; -webkit-app-region: no-drag; }
+/* icon alignment — lucide renders inline <svg>; flex-center any icon-bearing control */
+.brand,
+.project-switch,
+.new-convo,
+.pr-queue-btn,
+.conn-btn,
+.voice-toggle,
+.mic-toggle,
+.send,
+.projects-close,
+.project-remove,
+.pane-close,
+.jump-bottom,
+.project-dot,
+.conn-title,
+.pr-title,
+.project-remote {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pr-title, .project-remote { display: inline-flex; gap: 4px; }
 .titlebar-spacer { flex: 1; }
 /* small dim tag inside a toolbar button, e.g. "PROJECT" */
 .btn-tag {

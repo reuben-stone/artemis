@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+import { Hexagon, ArrowDown, ArrowUp, Volume2, VolumeX, Mic, CircleDot } from 'lucide-react'
 import type { OrbState } from './Orb'
 
 export interface Message {
@@ -134,7 +135,7 @@ export default function Chat({
         if (isStreamingBubble && m.text.length === 0) return null // shown as thinking row
         return (
           <div key={i} className={`row ${m.role}`}>
-            <div className="avatar">{m.role === 'user' ? 'You' : '◈'}</div>
+            <div className="avatar">{m.role === 'user' ? 'You' : <Hexagon size={13} />}</div>
             <div className={`bubble ${m.role}`}>
               {m.role === 'assistant' ? (
                 <div className="md">
@@ -180,7 +181,7 @@ export default function Chat({
 
         {awaiting && (
           <div className="row assistant">
-            <div className="avatar">◈</div>
+            <div className="avatar"><Hexagon size={13} /></div>
             <div className="bubble assistant thinking">
               <span className="think-label">{STATE_LABEL[state] ?? 'Thinking'}</span>
               <span className="dots">
@@ -195,7 +196,7 @@ export default function Chat({
 
       {showJump && (
         <button className="jump-bottom" onClick={() => scrollToBottom()} title="Jump to latest">
-          ↓
+          <ArrowDown size={16} />
         </button>
       )}
 
@@ -210,7 +211,7 @@ export default function Chat({
           onClick={onToggleVoice}
           title={voiceOn ? 'Voice on' : 'Voice off'}
         >
-          {voiceOn ? '🔊' : '🔇'}
+          {voiceOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
         </button>
         {micSupported && (
           <button
@@ -218,7 +219,7 @@ export default function Chat({
             onClick={onMic}
             title={listening ? 'Stop listening' : 'Speak to Artemis'}
           >
-            {listening ? '◉' : '🎤'}
+            {listening ? <CircleDot size={16} /> : <Mic size={16} />}
           </button>
         )}
         <textarea
@@ -235,7 +236,7 @@ export default function Chat({
           }}
         />
         <button className="send" onClick={submit} disabled={!draft.trim()}>
-          {busy && !draft.trim() ? '…' : '↑'}
+          {busy && !draft.trim() ? '…' : <ArrowUp size={16} />}
         </button>
       </div>
     </div>
