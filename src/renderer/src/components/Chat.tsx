@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -157,8 +158,16 @@ export default function Chat({
     [messages, streaming]
   )
 
+  // Clicking anywhere in the chat focuses the composer — unless the user is selecting
+  // text or clicked an interactive element (link/button/the textarea itself).
+  const focusComposer = (e: ReactMouseEvent): void => {
+    if (window.getSelection()?.toString()) return
+    if ((e.target as HTMLElement).closest('a, button, input, textarea')) return
+    taRef.current?.focus()
+  }
+
   return (
-    <div className="chat">
+    <div className="chat" onClick={focusComposer}>
       <div
         className="chat-log"
         ref={scrollRef}
