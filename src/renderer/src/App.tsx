@@ -262,12 +262,16 @@ export default function App() {
   // transcript we send it; until the Whisper engine is wired we show a gentle hint.
   const handleAudio = useCallback(
     async (samples: Float32Array, sampleRate: number) => {
+      setMicHint('Transcribing… (the first time downloads the model)')
+      setState('thinking')
       const text = await transcribe(samples, sampleRate)
       if (text && text.trim()) {
         setMicHint(null)
+        setState('idle')
         send(text.trim())
       } else {
-        setMicHint('Heard you — local voice transcription (Whisper) lands next. Type for now.')
+        setMicHint("Didn't catch that — try again, or type.")
+        setState('idle')
       }
     },
     [send]

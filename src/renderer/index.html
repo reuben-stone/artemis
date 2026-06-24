@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP. 'wasm-unsafe-eval' + the worker/connect allowances exist so local Whisper
+      (transformers.js) can run its WASM and fetch the model on first use. connect-src
+      is scoped to the HF model hub + the jsDelivr CDN that serves the onnxruntime WASM;
+      everything else stays 'self'. Tightening path: vendor the model + WASM locally to
+      drop the remote connect-src (see ROADMAP-TO-JARVIS.md, Phase 1).
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' data: https://huggingface.co https://*.hf.co https://cdn.jsdelivr.net"
     />
     <title>Artemis</title>
   </head>
