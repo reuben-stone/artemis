@@ -204,7 +204,12 @@ ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prom
       pendingPerms.set(permId, resolve)
       win.webContents.send('agent:permission', { permId, ...req })
     })
-  return runAgent(win, requestId, prompt, ask)
+  // Electron transport adapter: forward agent events to the renderer. A future
+  // sidecar daemon supplies a different emit (socket) — runAgent is unchanged.
+  const emit = (event: Record<string, unknown>): void => {
+    if (!win.isDestroyed()) win.webContents.send('agent:event', event)
+  }
+  return runAgent(emit, requestId, prompt, ask)
 })
 
 // After a renderer reload (e.g. a hot-reload of Artemis's own UI) the new page asks
