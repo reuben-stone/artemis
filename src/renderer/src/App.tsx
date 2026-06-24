@@ -314,10 +314,10 @@ export default function App() {
         return
       }
 
-      // hand the turn to the real operator. Commit the user message now; the operator
-      // commits its assistant reply from main when the turn completes.
+      // hand the turn to the real operator. Show the user message optimistically; main
+      // persists BOTH the user message (once) and its assistant reply when the turn
+      // runs — committing it here too would double-send it into the model's context.
       setMessages((m) => [...m, { role: 'user', text }, { role: 'assistant', text: '' }])
-      window.artemis?.history?.append('user', text)
       acc.current = ''
       const requestId = `r${reqCounter.current++}`
       activeReq.current = requestId
