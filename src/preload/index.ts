@@ -9,6 +9,13 @@ export interface Project {
   dirty: boolean
   active: boolean
   gh: { slug: string; url: string } | null
+  gaProperty: string | null
+}
+
+export interface ConnectionsStatus {
+  anthropic: boolean
+  github: { connected: boolean; user: string | null }
+  ga: { configured: boolean }
 }
 
 export interface PrReview {
@@ -79,7 +86,17 @@ const api = {
     // Opens a native multi-select folder picker; returns the updated list.
     add: (): Promise<Project[]> => ipcRenderer.invoke('projects:add'),
     remove: (id: number): Promise<Project[]> => ipcRenderer.invoke('projects:remove', id),
-    setActive: (path: string): Promise<Project[]> => ipcRenderer.invoke('projects:setActive', path)
+    setActive: (path: string): Promise<Project[]> => ipcRenderer.invoke('projects:setActive', path),
+    setGaProperty: (path: string, propertyId: string): Promise<Project[]> =>
+      ipcRenderer.invoke('projects:setGaProperty', { path, propertyId })
+  },
+  // Connections / onboarding — status + setup for each integration.
+  connections: {
+    status: (): Promise<ConnectionsStatus> => ipcRenderer.invoke('connections:status'),
+    setGaCredentials: (): Promise<{ ok: boolean; configured: boolean; error?: string }> =>
+      ipcRenderer.invoke('connections:setGaCredentials'),
+    clearGaCredentials: (): Promise<{ configured: boolean }> =>
+      ipcRenderer.invoke('connections:clearGaCredentials')
   },
   // PR Review Queue — worker-agent PRs awaiting the human's approval.
   prReviews: {
