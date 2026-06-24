@@ -31,6 +31,7 @@ const memoryServer = createSdkMcpServer({
       },
       async (args) => {
         const { file } = await saveMemory(args)
+        invalidateSystemCache() // rebuild on next turn so the new fact is injected
         return { content: [{ type: 'text', text: `Saved to memory (${file}).` }] }
       }
     ),
@@ -89,14 +90,29 @@ function repoRoot(): string {
   return app.getAppPath()
 }
 
+let _hasLogin: boolean | null = null
 async function hasSubscriptionLogin(): Promise<boolean> {
-  // Claude Code stores a login under ~/.claude (sessions/credentials). Its presence
-  // means the SDK can inherit it; we then avoid setting an API key.
-  return existsSync(join(homedir(), '.claude'))
+  if (_hasLogin === null) _hasLogin = existsSync(join(homedir(), '.claude'))
+  return _hasLogin
+}
+
+// Cached system append: rebuilt from disk only when memory changes or the cache expires.
+// Avoids file I/O on every turn; invalidated explicitly by invalidateSystemCache().
+let _systemAppendCache: string | null = null
+let _systemAppendTime = 0
+const SYSTEM_CACHE_TTL = 60_000 // 60s — covers a normal conversation burst
+
+export function invalidateSystemCache(): void {
+  _systemAppendCache = null
 }
 
 /** Build the system prompt: Claude Code preset + Artemis identity + memory. */
 async function buildSystemAppend(): Promise<string> {
+  const now = Date.now()
+  if (_systemAppendCache && now - _systemAppendTime < SYSTEM_CACHE_TTL) {
+    return _systemAppendCache
+  }
+
   const parts: string[] = []
   try {
     parts.push(await fs.readFile(join(repoRoot(), 'ARTEMIS.md'), 'utf8'))
@@ -149,7 +165,16 @@ async function buildSystemAppend(): Promise<string> {
     ].join('\n')
   )
 
-  return parts.join('\n\n')
+  // Tool discipline: don't call tools for simple conversational replies — each tool call
+  // is a full extra API round-trip. Only reach for Read/Grep/Bash when the task actually
+  // requires inspecting or modifying files.
+  parts.push(
+    'TOOL DISCIPLINE — for conversational replies, greetings, or answers you already know, respond directly without calling any tools. Only use Read, Grep, Glob, Bash, Edit, or Write when the task genuinely requires inspecting or changing files. Unnecessary tool calls add latency.'
+  )
+
+  _systemAppendCache = parts.join('\n\n')
+  _systemAppendTime = now
+  return _systemAppendCache
 }
 
 export interface PermissionAsker {
