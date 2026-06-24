@@ -106,9 +106,11 @@ export interface GaMetrics {
   newUsers: number
   sessions: number
   views: number
+  // % change vs the previous 7 days (null when there's no prior data to compare).
+  delta: { users: number | null; sessions: number | null; views: number | null }
 }
 
-/** Structured last-7-days metrics for one GA4 property. */
+/** Last-7-days metrics for a GA4 property, with week-over-week deltas. */
 export async function gaMetrics(propertyId: string): Promise<GaMetrics> {
   const token = await getAccessToken()
   const id = propertyId.replace(/^properties\//, '')
@@ -116,7 +118,11 @@ export async function gaMetrics(propertyId: string): Promise<GaMetrics> {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      dateRanges: [{ startDate: '7daysAgo', endDate: 'today' }],
+      // two ranges → current week + prior week for comparison
+      dateRanges: [
+        { startDate: '7daysAgo', endDate: 'today' },
+        { startDate: '14daysAgo', endDate: '8daysAgo' }
+      ],
       metrics: [
         { name: 'activeUsers' },
         { name: 'newUsers' },
@@ -126,9 +132,28 @@ export async function gaMetrics(propertyId: string): Promise<GaMetrics> {
     })
   })
   if (!res.ok) throw new Error(`GA report error ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  const data = (await res.json()) as { rows?: Array<{ metricValues: Array<{ value: string }> }> }
-  const v = data.rows?.[0]?.metricValues?.map((m) => Number(m.value) || 0) ?? [0, 0, 0, 0]
-  return { users: v[0], newUsers: v[1], sessions: v[2], views: v[3] }
+  const data = (await res.json()) as {
+    rows?: Array<{ dimensionValues?: Array<{ value: string }>; metricValues: Array<{ value: string }> }>
+  }
+  const rows = data.rows ?? []
+  const pick = (i: number): number[] => {
+    const row = rows.find((r) => r.dimensionValues?.[0]?.value === `date_range_${i}`) ?? rows[i]
+    return row?.metricValues?.map((m) => Number(m.value) || 0) ?? [0, 0, 0, 0]
+  }
+  const cur = pick(0)
+  const prev = pick(1)
+  const pct = (c: number, p: number): number | null => (p > 0 ? Math.round(((c - p) / p) * 100) : null)
+  return {
+    users: cur[0],
+    newUsers: cur[1],
+    sessions: cur[2],
+    views: cur[3],
+    delta: {
+      users: pct(cur[0], prev[0]),
+      sessions: pct(cur[2], prev[2]),
+      views: pct(cur[3], prev[3])
+    }
+  }
 }
 
 /** A compact last-7-days summary string for one GA4 property (used in ecosystem_status). */
