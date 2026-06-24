@@ -900,6 +900,14 @@ html, body, #root {
   text-align: center;
 }
 .brand.big { font-size: 22px; color: #9b6bff; letter-spacing: 0.2em; }
+.ks-acronym {
+  max-width: 460px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: -4px 0 6px;
+}
 .ks-lead { max-width: 520px; color: #aab; line-height: 1.6; font-size: 14px; }
 .ks-lead code { color: #27e0a8; background: rgba(255,255,255,0.05); padding: 1px 6px; border-radius: 5px; }
 .ks-input {
