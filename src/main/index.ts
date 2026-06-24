@@ -26,7 +26,10 @@ import {
   removeProject,
   getActiveProjectPath,
   setActiveProjectPath,
-  ensureSelfProject
+  ensureSelfProject,
+  listPrReviews,
+  setPrReviewed,
+  clearReviewedPrs
 } from './store'
 
 const execp = promisify(exec)
@@ -256,6 +259,17 @@ ipcMain.handle('projects:setActive', (_e, path: string) => {
   setActiveProjectPath(path)
   invalidateSystemCache() // the active project is baked into the system prompt
   return projectsWithStatus()
+})
+
+// --- PR Review Queue IPC (worker-agent output, human approval) ---
+ipcMain.handle('prReviews:list', () => listPrReviews())
+ipcMain.handle('prReviews:setReviewed', (_e, { id, reviewed }: { id: number; reviewed: boolean }) => {
+  setPrReviewed(id, reviewed)
+  return listPrReviews()
+})
+ipcMain.handle('prReviews:clearReviewed', () => {
+  clearReviewedPrs()
+  return listPrReviews()
 })
 
 // --- Auth IPC ---

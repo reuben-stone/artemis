@@ -270,6 +270,52 @@ html, body, #root {
 }
 .project-remote { font-size: 10px; color: #3aa0ff; text-decoration: none; white-space: nowrap; }
 .project-remote:hover { text-decoration: underline; }
+
+.pr-queue-btn {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.pr-queue-btn:hover { color: var(--text); }
+.pr-queue-btn.on { color: #27e0a8; border-color: #27e0a855; background: #27e0a814; }
+
+.pr-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.pr-row:hover { background: rgba(255, 255, 255, 0.03); }
+.pr-row.done { opacity: 0.5; }
+.pr-check { margin-top: 2px; accent-color: #27e0a8; cursor: pointer; flex: 0 0 auto; }
+.pr-body { min-width: 0; flex: 1; }
+.pr-title {
+  font-size: 13.5px;
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+.pr-row.done .pr-title { text-decoration: line-through; }
+.pr-title:hover { color: #3aa0ff; }
+.pr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.pr-project { color: #3aa0ff; }
+.pr-branch { font-family: Menlo, monospace; }
+.pr-agent { font-style: italic; }
 .cost {
   font-variant-numeric: tabular-nums;
   font-size: 10px;
