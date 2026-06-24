@@ -7,7 +7,8 @@ import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
 import { SettingsModal } from './components/SettingsModal'
-import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X } from 'lucide-react'
+import { BriefingCard } from './components/BriefingCard'
+import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise } from 'lucide-react'
 import type { Project, PrReview, GaProp } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
@@ -41,6 +42,11 @@ export default function App() {
   const [prs, setPrs] = useState<PrReview[]>([])
   const [showPrs, setShowPrs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  // On-command briefing, shown in a docked card in the orb area.
+  const [showBriefing, setShowBriefing] = useState(false)
+  const [briefingText, setBriefingText] = useState('')
+  const [briefingAt, setBriefingAt] = useState<number | null>(null)
+  const [briefingLoading, setBriefingLoading] = useState(false)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -408,6 +414,34 @@ export default function App() {
   // latest closure (which captures the current voiceOn / speak values).
   sendRef.current = send
 
+  // On-command briefing → docked card. Load the last one on boot so reopening is instant.
+  useEffect(() => {
+    window.artemis?.briefing?.latest().then((b) => {
+      if (b) {
+        setBriefingText(b.text)
+        setBriefingAt(b.at)
+      }
+    })
+  }, [])
+
+  const runBriefingNow = useCallback(async () => {
+    setBriefingLoading(true)
+    try {
+      const r = await window.artemis?.briefing?.run()
+      if (r) {
+        setBriefingText(r.text)
+        setBriefingAt(r.at)
+      }
+    } finally {
+      setBriefingLoading(false)
+    }
+  }, [])
+
+  const openBriefing = useCallback(() => {
+    setShowBriefing(true)
+    if (!briefingText && !briefingLoading) void runBriefingNow()
+  }, [briefingText, briefingLoading, runBriefingNow])
+
   // Voice input (Phase 1 — ears). Capture drives the orb amplitude from your live
   // voice; transcription is a swappable seam (agent/transcribe.ts). On a final
   // transcript we send it; until the Whisper engine is wired we show a gentle hint.
@@ -538,6 +572,13 @@ export default function App() {
           >
             <GitPullRequest size={14} /> PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
           </button>
+          <button
+            className={`pr-queue-btn ${showBriefing ? 'on' : ''}`}
+            onClick={() => (showBriefing ? setShowBriefing(false) : openBriefing())}
+            title="Run / show the ecosystem briefing"
+          >
+            <Sunrise size={14} /> Briefing
+          </button>
 
           <span className="titlebar-spacer" />
 
@@ -570,6 +611,17 @@ export default function App() {
       <div className="stage">
         <section className="orb-pane">
           <Orb state={state} amplitudeRef={amplitudeRef} />
+          {showBriefing && (
+            <div className="orb-dock">
+              <BriefingCard
+                text={briefingText}
+                at={briefingAt}
+                loading={briefingLoading}
+                onRefresh={runBriefingNow}
+                onClose={() => setShowBriefing(false)}
+              />
+            </div>
+          )}
         </section>
         <section className="side-col">
           {showTerminal && (
