@@ -26,6 +26,14 @@ export interface ModelTurnRequest {
   tools: Anthropic.Tool[]
 }
 
+/** Token counts for one model call. Local backends report all zeros. */
+export interface ModelUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
 export interface ModelFinal {
   /**
    * The assistant's full reply as Anthropic content blocks (text + tool_use), so
@@ -35,6 +43,14 @@ export interface ModelFinal {
   content: Anthropic.ContentBlockParam[]
   /** 'tool_use' means the loop should run the tools and continue; else it's done. */
   stopReason: string
+  /** Token usage for this call, when the backend reports it. */
+  usage?: ModelUsage
+  /**
+   * Estimated USD cost of this single model call at list prices. Each client owns
+   * its own pricing (it knows its model) — $0 for local backends. The agent sums
+   * these across a turn's model calls for the running session cost meter.
+   */
+  cost?: number
 }
 
 export interface ModelStream {
