@@ -120,14 +120,14 @@ brain (level 2) remains future work, slated alongside Phase 6.
 - ◻︎ Error & auth UX: clearer states when the key/login is missing — already in reasonable shape (KeySetup + actionable auth error); revisit if it bites.
 - **Done when:** Artemis reliably remembers facts across restarts *and* uses them in answers, with visible session state. → **essentially met; pending the restart that loads the memory tools + a quick live check.**
 
-## Phase 1 — Give Artemis ears 🔴
+## Phase 1 — Give Artemis ears 🔴  ← *active*
 *The single biggest leap toward Jarvis: talking instead of typing.*
 
-- **Speech-to-text** input — stream mic audio to a fast STT (local Whisper or a streaming API), render a live transcript.
-- **Wake word** ("Artemis…") for hands-free activation; visual cue on the orb when listening.
-- **Barge-in** — talking interrupts Artemis mid-speech (cancel TTS, start listening). The orb already has a `cancel()` path to build on.
-- **Voice activity detection** so it knows when you've finished a thought.
-- New orb state: `listening`.
+- ✅ **Capture foundation** — `useSpeech` grabs the mic, pulses the orb to your live voice, records, and emits mono 16kHz Float32 samples through a swappable `transcribe()` seam. Mic button + `listening` orb state + main-process mic permissions.
+- ✅ **Barge-in** — starting to listen cancels in-progress TTS.
+- ⏳ **Speech-to-text engine** — decided: **local Whisper via transformers.js in a Web Worker** (local-first). The seam (`agent/transcribe.ts`) is in place and currently returns null; wiring the worker is the next focused step. **← next**
+- ◻︎ **Wake word** ("Artemis…") for hands-free activation.
+- ◻︎ **Voice activity detection** so it knows when you've finished a thought (auto-stop).
 - **Done when:** you can hold a spoken back-and-forth, hands-free, and interrupt naturally.
 
 ## Phase 2 — A voice worth listening to 🟢→🔴
