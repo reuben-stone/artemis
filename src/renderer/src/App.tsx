@@ -513,7 +513,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="titlebar">
-        <span className="brand">
+        <span
+          className="brand"
+          title="A.R.T.E.M.I.S. — Autonomous Repository-Tending Engineering, Monitoring & Intelligence System"
+        >
           <Hexagon size={14} strokeWidth={2.5} /> ARTEMIS
         </span>
         <div className="titlebar-right">

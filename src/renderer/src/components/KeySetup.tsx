@@ -29,6 +29,9 @@ export default function KeySetup({ onDone }: { onDone: () => void }) {
       <div className="brand big">
         <Hexagon size={22} strokeWidth={2.5} /> ARTEMIS
       </div>
+      <div className="ks-acronym">
+        Autonomous Repository-Tending Engineering, Monitoring &amp; Intelligence System
+      </div>
       <p className="ks-lead">
         I couldn't find a Claude Code login to run on. Log into Claude Code (run{' '}
         <code>claude</code> in a terminal once) and reopen me, or paste an Anthropic
