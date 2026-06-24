@@ -25,10 +25,10 @@ const execAsync = promisify(exec)
 const SAY_MARKER = '⟦say⟧'
 
 // Patterns we refuse without asking the user.
-const DANGEROUS = /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot|>\s*\/dev\/sd)/i
+export const DANGEROUS = /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot|>\s*\/dev\/sd)/i
 
 // Tools that need no permission prompt (read-only + our own memory ops).
-const AUTO_ALLOW = new Set(['Read', 'Glob', 'Grep', 'save_memory', 'recall_memory', 'WebFetch'])
+export const AUTO_ALLOW = new Set(['Read', 'Glob', 'Grep', 'save_memory', 'recall_memory', 'WebFetch'])
 
 function repoRoot(): string {
   return app.getAppPath()
@@ -479,7 +479,7 @@ async function toolRecallMemory(): Promise<string> {
     : 'No memories saved yet.'
 }
 
-async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   switch (name) {
     case 'Read':
       return toolRead(input as Parameters<typeof toolRead>[0])
@@ -511,7 +511,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
  *  - Merge consecutive same-role messages to satisfy the alternation constraint.
  *  Backend-neutral: prompt-cache anchoring is the AnthropicClient's job, not this.
  */
-function buildMessages(
+export function buildMessages(
   history: { role: 'user' | 'assistant'; text: string }[],
   newUserMessage: string
 ): Anthropic.MessageParam[] {
@@ -538,7 +538,7 @@ function buildMessages(
 
 // ─── Speechline helpers ────────────────────────────────────────────────────
 
-function splitSpeech(text: string): { display: string; speech: string } {
+export function splitSpeech(text: string): { display: string; speech: string } {
   const i = text.indexOf(SAY_MARKER)
   if (i === -1) return { display: text, speech: '' }
   return {
