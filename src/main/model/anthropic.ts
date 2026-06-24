@@ -1,5 +1,38 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { ModelClient, ModelStream, ModelFinal, ModelTurnRequest } from './types'
+import type { ModelClient, ModelStream, ModelFinal, ModelTurnRequest, ModelUsage } from './types'
+
+/**
+ * List prices in USD per million tokens (5-minute cache TTL: reads ~0.1× input,
+ * writes ~1.25× input). Matched loosely by family so model-string suffixes don't
+ * break it; unknown models fall back to Sonnet (the default backend model).
+ * Source: claude-api skill pricing table (verify if rates change).
+ */
+const PRICING_PER_MTOK: Record<'opus' | 'sonnet' | 'haiku', {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+}> = {
+  opus: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  sonnet: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  haiku: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 }
+}
+
+function estimateCost(model: string, u: ModelUsage): number {
+  const m = model.toLowerCase()
+  const rate = m.includes('opus')
+    ? PRICING_PER_MTOK.opus
+    : m.includes('haiku')
+      ? PRICING_PER_MTOK.haiku
+      : PRICING_PER_MTOK.sonnet
+  return (
+    (u.inputTokens * rate.input +
+      u.outputTokens * rate.output +
+      u.cacheReadTokens * rate.cacheRead +
+      u.cacheWriteTokens * rate.cacheWrite) /
+    1_000_000
+  )
+}
 
 /**
  * The metered Claude API backend (current default).
@@ -17,8 +50,9 @@ export class AnthropicClient implements ModelClient {
   ) {}
 
   stream(req: ModelTurnRequest): ModelStream {
+    const model = this.model
     const s = this.client.messages.stream({
-      model: this.model,
+      model,
       max_tokens: 8096,
       system: [
         {
@@ -43,9 +77,18 @@ export class AnthropicClient implements ModelClient {
       tokens: tokens(),
       final: async (): Promise<ModelFinal> => {
         const msg = await s.finalMessage()
+        const u = msg.usage
+        const usage: ModelUsage = {
+          inputTokens: u?.input_tokens ?? 0,
+          outputTokens: u?.output_tokens ?? 0,
+          cacheReadTokens: u?.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: u?.cache_creation_input_tokens ?? 0
+        }
         return {
           content: msg.content as unknown as Anthropic.ContentBlockParam[],
-          stopReason: msg.stop_reason ?? 'end_turn'
+          stopReason: msg.stop_reason ?? 'end_turn',
+          usage,
+          cost: estimateCost(model, usage)
         }
       }
     }
