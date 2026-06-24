@@ -593,7 +593,9 @@ async function toolEcosystemStatus(): Promise<string> {
       const branch = (await run('git rev-parse --abbrev-ref HEAD')) || '(no git)'
       const status = await run('git status --porcelain')
       const dirty = status ? status.split('\n').length : 0
-      const last = (await run('git log -1 --pretty=format:%h %s (%cr)')) || '(no commits)'
+      // Single-quote the format: it has spaces and parens that the shell would
+      // otherwise split into separate args / treat as a subshell (→ empty result).
+      const last = (await run("git log -1 --pretty=format:'%h %s (%cr)'")) || '(no commits)'
       const ahead = (await run('git rev-list --count @{u}..HEAD')) || '0'
       const behind = (await run('git rev-list --count HEAD..@{u}')) || '0'
       const sync = ahead !== '0' || behind !== '0' ? ` [↑${ahead} ↓${behind}]` : ''
