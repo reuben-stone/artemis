@@ -1183,6 +1183,97 @@ html, body, #root {
   white-space: pre;
 }
 
+/* drag-and-drop overlay */
+.drop-overlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--accent-bright);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 2px dashed rgba(var(--accent-rgb), 0.4);
+  border-radius: 14px;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+
+/* attachment preview chips above the composer */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+.attach-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.attach-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.attach-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 50%;
+  background: #1b1d28;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.attach-remove:hover { color: var(--text); }
+.attach-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.attach-btn:hover { color: var(--text); border-color: rgba(var(--accent-rgb), 0.4); }
+
+/* images attached to a user message */
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.msg-image {
+  max-width: 220px;
+  max-height: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
 .chat-input {
   display: flex;
   align-items: flex-end;

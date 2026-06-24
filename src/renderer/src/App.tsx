@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import Orb, { type OrbState } from './components/Orb'
 import TerminalPane from './components/TerminalPane'
-import Chat, { type Message } from './components/Chat'
+import Chat, { type Message, type OutImage } from './components/Chat'
 import PermissionDialog, { type PermissionReq } from './components/PermissionDialog'
 import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
@@ -447,7 +447,7 @@ export default function App() {
   }, [])
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, images?: OutImage[]) => {
       setBusy(true)
 
       // Memory intent is the model's job, not a UI keyword match: it has save_memory
@@ -457,11 +457,17 @@ export default function App() {
       // hand the turn to the real operator. Show the user message optimistically; main
       // persists BOTH the user message (once) and its assistant reply when the turn
       // runs — committing it here too would double-send it into the model's context.
-      setMessages((m) => [...m, { role: 'user', text }, { role: 'assistant', text: '' }])
+      setMessages((m) => [
+        ...m,
+        { role: 'user', text, images: images?.map((i) => i.dataUrl) },
+        { role: 'assistant', text: '' }
+      ])
       acc.current = ''
       const requestId = `r${reqCounter.current++}`
       activeReq.current = requestId
-      await window.artemis?.agent?.run(requestId, text)
+      // Strip the display-only dataUrl before crossing IPC; main only needs base64 + type.
+      const payload = images?.map((i) => ({ mediaType: i.mediaType, data: i.data }))
+      await window.artemis?.agent?.run(requestId, text, payload)
     },
     []
   )

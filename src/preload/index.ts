@@ -137,8 +137,11 @@ const api = {
     clearReviewed: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:clearReviewed')
   },
   agent: {
-    run: (requestId: string, prompt: string): Promise<void> =>
-      ipcRenderer.invoke('agent:run', { requestId, prompt }),
+    run: (
+      requestId: string,
+      prompt: string,
+      images?: { mediaType: string; data: string }[]
+    ): Promise<void> => ipcRenderer.invoke('agent:run', { requestId, prompt, images }),
     // Stop an in-flight turn (Esc / Stop button).
     cancel: (requestId: string): void => ipcRenderer.send('agent:cancel', requestId),
     // Start a fresh conversation: new SDK context + archived transcript view.

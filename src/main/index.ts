@@ -206,9 +206,18 @@ ipcMain.on('agent:permissionResponse', (_e, { permId, allow }: { permId: number;
   }
 })
 
-ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prompt: string }) => {
-  const win = BrowserWindow.fromWebContents(e.sender)
-  if (!win) return
+ipcMain.handle(
+  'agent:run',
+  (
+    e,
+    {
+      requestId,
+      prompt,
+      images
+    }: { requestId: string; prompt: string; images?: { mediaType: string; data: string }[] }
+  ) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return
   const ask = (req: { toolName: string; input: unknown }) =>
     new Promise<boolean>((resolve) => {
       const permId = ++permCounter
@@ -220,8 +229,9 @@ ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prom
   const emit = (event: Record<string, unknown>): void => {
     if (!win.isDestroyed()) win.webContents.send('agent:event', event)
   }
-  return runAgent(emit, requestId, prompt, ask)
-})
+    return runAgent(emit, requestId, prompt, ask, images)
+  }
+)
 
 // Stop an in-flight turn (Esc / Stop button) — aborts the model stream + tool loop.
 ipcMain.on('agent:cancel', (_e, requestId: string) => cancelTurn(requestId))
