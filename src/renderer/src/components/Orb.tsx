@@ -127,12 +127,12 @@ function OrbMesh({
   useFrame((_, delta) => {
     const cfg = STATE_CONFIG[state]
     const u = uniforms
-    // Cap delta so a stalled frame (heavy tool call, IPC spike) doesn't
-    // fast-forward uTime and leave the orb crawling slowly through a huge
-    // time value when it returns to idle.
-    const dt = Math.min(delta, 0.05)
-    // Keep uTime in a small repeating window so simplex noise never drifts
-    // into a flat region at large t values.
+    // Advance by REAL elapsed time so the orb never runs in slow-motion when the
+    // frame rate drops (e.g. macOS throttling rAF while the window is unfocused or
+    // occluded). Only a genuine long pause (>1s — a parked/resumed window) is capped
+    // to a tiny step so we don't jump; the `% 1000` wrap below keeps uTime bounded so
+    // simplex noise never drifts into a flat (frozen-looking) region.
+    const dt = delta > 1 ? 0.016 : delta
     u.uTime.value = (u.uTime.value + dt) % 1000
     // smooth the live amplitude so the pulse feels organic, not jittery
     ampRef.current += (amplitudeRef.current - ampRef.current) * Math.min(1, dt * 12)
