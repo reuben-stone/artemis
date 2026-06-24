@@ -19,7 +19,7 @@ import {
   getActiveProjectPath,
   getActiveProject,
   listProjects,
-  getProjectGaProperty,
+  getProjectGaProps,
   type StoredTurn
 } from './store'
 import { gaSummary, hasGaCredentials } from './ga'
@@ -654,13 +654,17 @@ async function toolEcosystemStatus(): Promise<string> {
         const shown = files.slice(0, 6).join(', ')
         lines.push(`    changed: ${shown}${files.length > 6 ? ` (+${files.length - 6} more)` : ''}`)
       }
-      // Live analytics for projects with a GA4 property configured (read-only).
-      const gaProp = getProjectGaProperty(p.path)
-      if (gaProp && hasGaCredentials()) {
-        try {
-          lines.push(`    ${await gaSummary(gaProp)}`)
-        } catch (err) {
-          lines.push(`    GA: unavailable (${err instanceof Error ? err.message.slice(0, 80) : 'error'})`)
+      // Live analytics for each GA4 property configured on this project (read-only).
+      // A monorepo can have several (e.g. Lumi + LumiLens), so loop and label each.
+      const gaProps = getProjectGaProps(p.path)
+      if (gaProps.length && hasGaCredentials()) {
+        for (const prop of gaProps) {
+          const tag = prop.label ? `${prop.label} — ` : ''
+          try {
+            lines.push(`    ${tag}${await gaSummary(prop.id)}`)
+          } catch (err) {
+            lines.push(`    ${tag}GA unavailable (${err instanceof Error ? err.message.slice(0, 70) : 'error'})`)
+          }
         }
       }
       lines.push(`    ${p.path}`)

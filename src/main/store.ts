@@ -250,13 +250,30 @@ export function setActiveProjectPath(path: string): void {
   setMeta(ACTIVE_PROJECT_KEY, path)
 }
 
-// Per-project GA4 property id (meta-keyed by path — no schema migration needed).
-export function getProjectGaProperty(path: string): string | null {
-  return getMeta(`ga_property:${path}`)
+// Per-project GA4 properties (meta-keyed by path). A project (e.g. a monorepo) can
+// expose several apps, each with its own GA4 property — so we store a labelled list.
+export interface GaProp {
+  label: string
+  id: string
 }
 
-export function setProjectGaProperty(path: string, propertyId: string): void {
-  setMeta(`ga_property:${path}`, propertyId.trim())
+export function getProjectGaProps(path: string): GaProp[] {
+  const raw = getMeta(`ga_props:${path}`)
+  if (raw) {
+    try {
+      return JSON.parse(raw) as GaProp[]
+    } catch {
+      return []
+    }
+  }
+  // Migrate the old single-id format, if present.
+  const legacy = getMeta(`ga_property:${path}`)
+  return legacy ? [{ label: '', id: legacy }] : []
+}
+
+export function setProjectGaProps(path: string, props: GaProp[]): void {
+  const clean = props.filter((p) => p.id.trim()).map((p) => ({ label: p.label.trim(), id: p.id.trim() }))
+  setMeta(`ga_props:${path}`, JSON.stringify(clean))
 }
 
 export function getActiveProject(): Project | null {
