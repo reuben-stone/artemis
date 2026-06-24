@@ -846,7 +846,26 @@ html, body, #root {
   background: var(--panel);
   border: 1px solid var(--border);
   border-top-left-radius: 4px;
+  position: relative;
 }
+
+/* hover-revealed copy-message button */
+.msg-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(12, 13, 22, 0.7);
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.row.assistant:hover .msg-copy { opacity: 0.6; }
+.msg-copy:hover { opacity: 1; color: var(--text); }
+.msg-copy.copied { opacity: 1; color: #5ad18b; }
 
 /* thinking indicator */
 .bubble.thinking { display: flex; align-items: center; gap: 10px; }

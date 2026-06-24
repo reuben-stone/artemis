@@ -24,7 +24,8 @@ import {
   Brain,
   Activity,
   Bot,
-  Wrench
+  Wrench,
+  Copy
 } from 'lucide-react'
 import type { OrbState } from './Orb'
 
@@ -175,16 +176,19 @@ export default function Chat({
             <div className="avatar">{m.role === 'user' ? 'You' : <Hexagon size={13} />}</div>
             <div className={`bubble ${m.role}`}>
               {m.role === 'assistant' ? (
-                <div className="md">
-                  {m.tools && m.tools.length > 0 && <ToolTimeline steps={m.tools} />}
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks]}
-                    components={mdComponents}
-                  >
-                    {m.text}
-                  </ReactMarkdown>
-                  {isStreamingBubble && m.text.length > 0 && <span className="caret" />}
-                </div>
+                <>
+                  <div className="md">
+                    {m.tools && m.tools.length > 0 && <ToolTimeline steps={m.tools} />}
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkBreaks]}
+                      components={mdComponents}
+                    >
+                      {m.text}
+                    </ReactMarkdown>
+                    {isStreamingBubble && m.text.length > 0 && <span className="caret" />}
+                  </div>
+                  {m.text.length > 0 && <MessageCopy text={m.text} />}
+                </>
               ) : (
                 m.text
               )}
@@ -286,6 +290,26 @@ export default function Chat({
         </button>
       </div>
     </div>
+  )
+}
+
+/* ---- per-message copy ---- */
+
+function MessageCopy({ text }: { text: string }): JSX.Element {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      className={`msg-copy ${copied ? 'copied' : ''}`}
+      title="Copy message"
+      onClick={() => {
+        navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1400)
+        })
+      }}
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
   )
 }
 
