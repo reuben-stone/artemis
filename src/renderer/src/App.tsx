@@ -293,27 +293,10 @@ export default function App() {
     async (text: string) => {
       setBusy(true)
 
-      // "remember …" → persist a durable fact via the markdown memory store.
-      const mem = text.match(/^\s*remember(?:\s+that)?\s+(.+)/i)
-      if (mem && window.artemis?.memory) {
-        const fact = mem[1].trim()
-        setMessages((m) => [...m, { role: 'user', text }])
-        window.artemis?.history?.append('user', text)
-        await window.artemis.memory.save({
-          name: fact.split(/\s+/).slice(0, 6).join('-'),
-          description: fact.slice(0, 80),
-          type: 'user',
-          body: fact
-        })
-        const ack = `Saved to memory — I'll remember that across sessions.`
-        setMessages((m) => [...m, { role: 'assistant', text: ack }])
-        window.artemis?.history?.append('assistant', ack)
-        setState('idle')
-        if (voiceOn) speak(ack)
-        setBusy(false)
-        return
-      }
-
+      // Memory intent is the model's job, not a UI keyword match: it has save_memory
+      // / recall_memory tools and an accurate self-model, so it can tell "remember
+      // that I prefer X" (save) from "remember any of our last convo?" (a recall
+      // question) — a regex on "remember" cannot, and was false-saving questions.
       // hand the turn to the real operator. Show the user message optimistically; main
       // persists BOTH the user message (once) and its assistant reply when the turn
       // runs — committing it here too would double-send it into the model's context.
@@ -323,7 +306,7 @@ export default function App() {
       activeReq.current = requestId
       await window.artemis?.agent?.run(requestId, text)
     },
-    [voiceOn, speak]
+    []
   )
   // Keep the ref current on every render so the onEvent drain always calls the
   // latest closure (which captures the current voiceOn / speak values).
@@ -403,13 +386,7 @@ export default function App() {
     setBusy(false)
     setState('idle')
     setCost(0)
-    const { facts } = (await window.artemis?.memory?.load()) ?? { facts: [] }
-    const greeting =
-      facts.length > 0
-        ? `Fresh start — I still remember ${facts.length} thing${
-            facts.length === 1 ? '' : 's'
-          } about you and our work. What next?`
-        : `Fresh start. What should we do?`
+    const greeting = `What can I help with?`
     setMessages([{ role: 'assistant', text: greeting }])
     window.artemis?.history?.append('assistant', greeting)
     if (voiceOnRef.current) setTimeout(() => speak(greeting), 200)
