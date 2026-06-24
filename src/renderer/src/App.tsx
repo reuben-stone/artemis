@@ -517,18 +517,7 @@ export default function App() {
           <Hexagon size={14} strokeWidth={2.5} /> ARTEMIS
         </span>
         <div className="titlebar-right">
-          {/* Left: primary action */}
-          <button
-            className="new-convo"
-            onClick={newConversation}
-            title="Start a new conversation (keeps history)"
-          >
-            <MessageSquarePlus size={14} /> New chat
-          </button>
-
-          <span className="titlebar-spacer" />
-
-          {/* Right: context + management + status */}
+          {/* Left: context */}
           <button
             className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
             onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
@@ -545,6 +534,17 @@ export default function App() {
             title="PR review queue"
           >
             <GitPullRequest size={14} /> PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
+          </button>
+
+          <span className="titlebar-spacer" />
+
+          {/* Right: primary action + settings + status */}
+          <button
+            className="new-convo"
+            onClick={newConversation}
+            title="Start a new conversation (keeps history)"
+          >
+            <MessageSquarePlus size={14} /> New chat
           </button>
           <button
             className="conn-btn"
