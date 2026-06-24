@@ -24,6 +24,8 @@ export interface ModelTurnRequest {
   messages: Anthropic.MessageParam[]
   /** Tool definitions, Anthropic shape. Clients translate to their own schema. */
   tools: Anthropic.Tool[]
+  /** Abort signal — cancels the in-flight model stream when the user stops the turn. */
+  signal?: AbortSignal
 }
 
 /** Token counts for one model call. Local backends report all zeros. */

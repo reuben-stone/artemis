@@ -139,6 +139,8 @@ const api = {
   agent: {
     run: (requestId: string, prompt: string): Promise<void> =>
       ipcRenderer.invoke('agent:run', { requestId, prompt }),
+    // Stop an in-flight turn (Esc / Stop button).
+    cancel: (requestId: string): void => ipcRenderer.send('agent:cancel', requestId),
     // Start a fresh conversation: new SDK context + archived transcript view.
     newConversation: (): Promise<void> => ipcRenderer.invoke('agent:newConversation'),
     // Reverse the last new-conversation: restore the prior thread.

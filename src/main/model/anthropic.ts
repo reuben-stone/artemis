@@ -51,19 +51,24 @@ export class AnthropicClient implements ModelClient {
 
   stream(req: ModelTurnRequest): ModelStream {
     const model = this.model
-    const s = this.client.messages.stream({
-      model,
-      max_tokens: 8096,
-      system: [
-        {
-          type: 'text',
-          text: req.system,
-          cache_control: { type: 'ephemeral' }
-        }
-      ],
-      messages: withCacheAnchor(req.messages),
-      tools: req.tools
-    })
+    const s = this.client.messages.stream(
+      {
+        model,
+        max_tokens: 8096,
+        system: [
+          {
+            type: 'text',
+            text: req.system,
+            cache_control: { type: 'ephemeral' }
+          }
+        ],
+        messages: withCacheAnchor(req.messages),
+        tools: req.tools
+      },
+      // Aborting this signal stops the HTTP stream; the token iterator + finalMessage()
+      // then reject, which the agent loop catches as a cancellation.
+      { signal: req.signal }
+    )
 
     async function* tokens(): AsyncIterable<string> {
       for await (const event of s as AsyncIterable<Anthropic.MessageStreamEvent>) {

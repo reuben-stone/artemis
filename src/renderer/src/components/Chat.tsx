@@ -25,7 +25,8 @@ import {
   Activity,
   Bot,
   Wrench,
-  Copy
+  Copy,
+  Square
 } from 'lucide-react'
 import type { OrbState } from './Orb'
 
@@ -61,6 +62,7 @@ export default function Chat({
   onToggleVoice,
   onSend,
   onQueue,
+  onStop,
   queueCount = 0,
   listening,
   micSupported,
@@ -74,6 +76,7 @@ export default function Chat({
   onToggleVoice: () => void
   onSend: (text: string) => void
   onQueue?: (text: string) => void
+  onStop?: () => void
   queueCount?: number
   listening: boolean
   micSupported: boolean
@@ -285,9 +288,15 @@ export default function Chat({
             }
           }}
         />
-        <button className="send" onClick={submit} disabled={!draft.trim()}>
-          {busy && !draft.trim() ? '…' : <ArrowUp size={16} />}
-        </button>
+        {busy && !draft.trim() ? (
+          <button className="send stop" onClick={onStop} title="Stop (Esc)">
+            <Square size={13} fill="currentColor" />
+          </button>
+        ) : (
+          <button className="send" onClick={submit} disabled={!draft.trim()}>
+            <ArrowUp size={16} />
+          </button>
+        )}
       </div>
     </div>
   )

@@ -238,17 +238,27 @@ export default function App() {
     })
   }, [])
 
-  // ⌘K / Ctrl+K toggles the command palette from anywhere.
+  // Stop the in-flight turn (Esc / Stop button) — aborts the model stream + tool loop
+  // in main; the resulting `done` event settles the UI like a normal completion.
+  const stopTurn = useCallback(() => {
+    if (activeReq.current) window.artemis?.agent?.cancel(activeReq.current)
+  }, [])
+
+  // ⌘K toggles the command palette; Esc stops a running turn (unless the palette is
+  // open, which handles its own Esc).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault()
         setShowCmdk((v) => !v)
+      } else if (e.key === 'Escape' && !showCmdk && busy && activeReq.current) {
+        e.preventDefault()
+        stopTurn()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [showCmdk, busy, stopTurn])
 
   const pendingPrs = prs.filter((p) => !p.reviewed).length
 
@@ -713,6 +723,7 @@ export default function App() {
               onToggleVoice={toggleVoice}
               onSend={send}
               onQueue={onQueue}
+              onStop={stopTurn}
               queueCount={queueCount}
               listening={speech.listening}
               micSupported={speech.supported}

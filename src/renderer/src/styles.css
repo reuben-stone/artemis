@@ -1217,6 +1217,9 @@ html, body, #root {
 }
 .send { background: var(--accent); border: none; font-weight: 700; }
 .send:disabled { opacity: 0.4; cursor: default; }
+/* stop variant while a turn is running — calmer than the accent send button */
+.send.stop { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.send.stop:hover { background: rgba(255, 255, 255, 0.16); }
 .queue-badge {
   margin: 0 12px 4px;
   padding: 4px 10px;
