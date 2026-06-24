@@ -6,7 +6,7 @@ import { promises as fs } from 'fs'
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { getApiKey } from './secrets'
-import { saveTurn, loadLastTurn, markTurnClaimed, appendMessage } from './store'
+import { saveTurn, loadLastTurn, markTurnClaimed, appendMessage, getModel } from './store'
 import { loadMemory, saveMemory } from './memory'
 
 /**
@@ -61,7 +61,8 @@ const memoryServer = createSdkMcpServer({
  * and run its terminal — gated by canUseTool (routed to the renderer for approval).
  */
 
-const MODEL = 'claude-opus-4-8'
+// The model is a stored preference (store.getModel) — defaults to Sonnet for speed/cost,
+// switchable to Opus from the UI — read fresh each turn rather than hardcoded.
 
 // Marker the operator appends to carry a short, spoken-aloud summary that is
 // distinct from the on-screen answer. Everything after it is the voice line and
@@ -323,7 +324,7 @@ export async function runAgent(
         prompt,
         options: {
           cwd: repoRoot(),
-          model: MODEL,
+          model: getModel(),
           includePartialMessages: true,
           settingSources: ['project'],
           resume: resumeId ?? undefined,

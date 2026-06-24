@@ -10,7 +10,9 @@ import {
   loadRecentMessages,
   appendTerminal,
   loadTerminalScrollback,
-  startNewConversation
+  startNewConversation,
+  getModel,
+  setModel
 } from './store'
 
 // node-pty is a native module; load lazily so a build issue doesn't crash boot.
@@ -152,6 +154,10 @@ ipcMain.handle('agent:newConversation', async () => {
   await resetSession()
   startNewConversation()
 })
+
+// Model preference (Sonnet default, switchable to Opus).
+ipcMain.handle('agent:getModel', () => getModel())
+ipcMain.handle('agent:setModel', (_e, model: string) => setModel(model))
 
 // --- Auth IPC ---
 ipcMain.handle('auth:status', async () => ({

@@ -81,6 +81,18 @@ html, body, #root {
   cursor: pointer;
 }
 .new-convo:hover { color: var(--text); border-color: #9b6bff66; }
+.model-toggle {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.model-toggle:hover { color: var(--text); }
+.model-toggle.opus { color: #c79bff; border-color: #9b6bff66; background: #9b6bff14; }
 .cost {
   font-variant-numeric: tabular-nums;
   font-size: 10px;

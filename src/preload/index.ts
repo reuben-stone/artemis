@@ -56,6 +56,8 @@ const api = {
       ipcRenderer.invoke('agent:run', { requestId, prompt }),
     // Start a fresh conversation: new SDK context + archived transcript view.
     newConversation: (): Promise<void> => ipcRenderer.invoke('agent:newConversation'),
+    getModel: (): Promise<string> => ipcRenderer.invoke('agent:getModel'),
+    setModel: (model: string): Promise<void> => ipcRenderer.invoke('agent:setModel', model),
     // Ask main whether a turn was streaming when the renderer reloaded, so the
     // fresh page can re-attach instead of dropping the answer.
     resync: (): Promise<null | {

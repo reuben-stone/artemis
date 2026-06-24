@@ -26,6 +26,7 @@ export default function App() {
   const [permission, setPermission] = useState<PermissionReq | null>(null)
   const [cost, setCost] = useState(0) // running session cost (USD)
   const [micHint, setMicHint] = useState<string | null>(null)
+  const [model, setModel] = useState('claude-sonnet-4-6')
 
   const amplitudeRef = useRef(0)
   const { speak, cancel, voices, selectedVoice, setVoice, previewVoice } = useVoice(
@@ -71,6 +72,20 @@ export default function App() {
 
   useEffect(() => {
     window.artemis?.app?.getAutoLaunch().then(setAutoLaunch)
+  }, [])
+
+  useEffect(() => {
+    window.artemis?.agent?.getModel().then((m) => m && setModel(m))
+  }, [])
+
+  // Toggle between the fast/cheap default (Sonnet) and max-capability (Opus). Takes
+  // effect on the next turn — the agent reads the stored preference each turn.
+  const toggleModel = useCallback(() => {
+    setModel((m) => {
+      const next = m === 'claude-opus-4-8' ? 'claude-sonnet-4-6' : 'claude-opus-4-8'
+      window.artemis?.agent?.setModel(next)
+      return next
+    })
   }, [])
 
   // Restore the transcript from the SQLite backbone; only greet on a genuinely fresh
@@ -349,6 +364,17 @@ export default function App() {
             title="New conversation (keeps history)"
           >
             ＋ new
+          </button>
+          <button
+            className={`model-toggle ${model === 'claude-opus-4-8' ? 'opus' : ''}`}
+            onClick={toggleModel}
+            title={
+              model === 'claude-opus-4-8'
+                ? 'Opus 4.8 — max capability (slower, pricier). Click for Sonnet.'
+                : 'Sonnet 4.6 — fast & efficient. Click for Opus.'
+            }
+          >
+            {model === 'claude-opus-4-8' ? 'Opus' : 'Sonnet'}
           </button>
           <button
             className={`term-toggle ${showTerminal ? 'on' : ''}`}

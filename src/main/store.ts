@@ -107,6 +107,20 @@ export function startNewConversation(): void {
   setMeta(VIEW_FLOOR, String(max))
 }
 
+// --- model preference --------------------------------------------------------
+
+// Default to Sonnet: ~5x cheaper and much faster than Opus for everyday conversation.
+const MODEL_KEY = 'model'
+const DEFAULT_MODEL = 'claude-sonnet-4-6'
+
+export function getModel(): string {
+  return getMeta(MODEL_KEY) ?? DEFAULT_MODEL
+}
+
+export function setModel(model: string): void {
+  setMeta(MODEL_KEY, model)
+}
+
 // --- transcript ---------------------------------------------------------------
 
 /** Append one committed message to the durable transcript. */
