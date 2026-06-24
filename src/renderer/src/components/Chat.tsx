@@ -26,7 +26,9 @@ import {
   Bot,
   Wrench,
   Copy,
-  Square
+  Square,
+  Paperclip,
+  X
 } from 'lucide-react'
 import type { OrbState } from './Orb'
 
@@ -43,6 +45,58 @@ export interface Message {
   text: string
   /** Tool calls made during this assistant turn, shown as an activity timeline. */
   tools?: ToolStep[]
+  /** Data-URL thumbnails of images attached to a user turn (display only). */
+  images?: string[]
+}
+
+/** An image attachment sent with a turn: base64 for the model, dataUrl for display. */
+export interface OutImage {
+  mediaType: string
+  data: string
+  dataUrl: string
+}
+
+interface Attachment {
+  id: string
+  kind: 'image' | 'text'
+  name: string
+  // image
+  mediaType?: string
+  data?: string
+  dataUrl?: string
+  // text/code
+  text?: string
+}
+
+// Files we'll read as text (inlined into the prompt) rather than as binary.
+const TEXT_EXT =
+  /\.(txt|md|markdown|json|ya?ml|csv|log|js|jsx|ts|tsx|py|go|rb|rs|java|kt|c|h|cpp|cc|cs|php|css|scss|html|sh|bash|zsh|toml|ini|env|sql|xml|svelte|vue)$/i
+
+// Read a dropped/pasted/picked file into an Attachment. Images → base64 data URL;
+// small text/code files → their contents. Anything else (e.g. PDF, for now) → null.
+function readAttachment(file: File): Promise<Attachment | null> {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${file.name}`
+  if (file.type.startsWith('image/')) {
+    return new Promise((resolve) => {
+      const r = new FileReader()
+      r.onload = () => {
+        const dataUrl = String(r.result)
+        const data = dataUrl.split(',')[1] ?? ''
+        resolve({ id, kind: 'image', name: file.name || 'image', mediaType: file.type, data, dataUrl })
+      }
+      r.onerror = () => resolve(null)
+      r.readAsDataURL(file)
+    })
+  }
+  if (file.size <= 256 * 1024 && (file.type.startsWith('text/') || TEXT_EXT.test(file.name))) {
+    return new Promise((resolve) => {
+      const r = new FileReader()
+      r.onload = () => resolve({ id, kind: 'text', name: file.name, text: String(r.result) })
+      r.onerror = () => resolve(null)
+      r.readAsText(file)
+    })
+  }
+  return Promise.resolve(null)
 }
 
 // One-click starters shown on a fresh conversation (no user turn yet). Tuned to the
@@ -83,7 +137,7 @@ export default function Chat({
   state: OrbState
   voiceOn: boolean
   onToggleVoice: () => void
-  onSend: (text: string) => void
+  onSend: (text: string, images?: OutImage[]) => void
   onQueue?: (text: string) => void
   onStop?: () => void
   queueCount?: number
@@ -93,8 +147,20 @@ export default function Chat({
   micHint?: string | null
 }) {
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0) // nested dragenter/leave events — count to know when truly out
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+
+  const addFiles = async (files: FileList | File[]): Promise<void> => {
+    const read = await Promise.all(Array.from(files).map(readAttachment))
+    const ok = read.filter((a): a is Attachment => a !== null)
+    if (ok.length) setAttachments((cur) => [...cur, ...ok])
+  }
+  const removeAttachment = (id: string): void =>
+    setAttachments((cur) => cur.filter((a) => a.id !== id))
   // whether the view is pinned to the bottom; when false the user has
   // scrolled up and we must NOT yank them back down mid-stream.
   const stick = useRef(true)
@@ -153,15 +219,29 @@ export default function Chat({
 
   const submit = () => {
     const text = draft.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
+
+    // Text/code files inline into the prompt (works on any backend); images go as
+    // structured attachments for the vision model.
+    const parts = text ? [text] : []
+    for (const f of attachments.filter((a) => a.kind === 'text')) {
+      parts.push(`File: ${f.name}\n\`\`\`\n${f.text}\n\`\`\``)
+    }
+    const outText = parts.join('\n\n')
+    const images: OutImage[] = attachments
+      .filter((a) => a.kind === 'image')
+      .map((a) => ({ mediaType: a.mediaType!, data: a.data!, dataUrl: a.dataUrl! }))
+
     if (busy) {
-      // Queue the message to be sent after the current turn completes.
-      onQueue?.(text)
+      // The barge-in queue is text-only; attachments can't ride along.
+      if (outText) onQueue?.(outText)
       setDraft('')
+      setAttachments([])
       return
     }
-    onSend(text)
+    onSend(outText, images.length ? images : undefined)
     setDraft('')
+    setAttachments([])
     stick.current = true
     requestAnimationFrame(() => scrollToBottom('auto'))
   }
@@ -204,7 +284,16 @@ export default function Chat({
                   {m.text.length > 0 && <MessageCopy text={m.text} />}
                 </>
               ) : (
-                m.text
+                <>
+                  {m.images && m.images.length > 0 && (
+                    <div className="msg-images">
+                      {m.images.map((src, k) => (
+                        <img key={k} src={src} className="msg-image" alt="attachment" />
+                      ))}
+                    </div>
+                  )}
+                  {m.text}
+                </>
               )}
             </div>
           </div>
@@ -222,7 +311,31 @@ export default function Chat({
   }
 
   return (
-    <div className="chat" onClick={focusComposer}>
+    <div
+      className="chat"
+      onClick={focusComposer}
+      onDragEnter={(e) => {
+        e.preventDefault()
+        dragDepth.current++
+        setDragging(true)
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1)
+        if (dragDepth.current === 0) setDragging(false)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        dragDepth.current = 0
+        setDragging(false)
+        if (e.dataTransfer?.files?.length) void addFiles(e.dataTransfer.files)
+      }}
+    >
+      {dragging && (
+        <div className="drop-overlay">
+          <Paperclip size={20} /> Drop images or files to attach
+        </div>
+      )}
       <div
         className="chat-log"
         ref={scrollRef}
@@ -279,7 +392,44 @@ export default function Chat({
         <div className="queue-badge">{queueCount} queued</div>
       )}
 
+      {attachments.length > 0 && (
+        <div className="attachments">
+          {attachments.map((a) => (
+            <div key={a.id} className="attach-chip">
+              {a.kind === 'image' ? (
+                <img src={a.dataUrl} alt={a.name} className="attach-thumb" />
+              ) : (
+                <span className="attach-file">
+                  <FileText size={13} /> {a.name}
+                </span>
+              )}
+              <button
+                className="attach-remove"
+                onClick={() => removeAttachment(a.id)}
+                title="Remove"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="chat-input">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,text/*,.md,.json,.log,.csv,.ts,.tsx,.js,.jsx,.py,.go,.yaml,.yml,.toml"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            if (e.target.files?.length) void addFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
+        <button className="attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach files">
+          <Paperclip size={16} />
+        </button>
         <button
           className={`voice-toggle ${voiceOn ? 'on' : ''}`}
           onClick={onToggleVoice}
@@ -302,6 +452,16 @@ export default function Chat({
           placeholder="Message Artemis…"
           rows={1}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData?.items ?? [])
+              .filter((it) => it.kind === 'file')
+              .map((it) => it.getAsFile())
+              .filter((f): f is File => !!f)
+            if (files.length) {
+              e.preventDefault()
+              void addFiles(files)
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -314,7 +474,11 @@ export default function Chat({
             <Square size={13} fill="currentColor" />
           </button>
         ) : (
-          <button className="send" onClick={submit} disabled={!draft.trim()}>
+          <button
+            className="send"
+            onClick={submit}
+            disabled={!draft.trim() && attachments.length === 0}
+          >
             <ArrowUp size={16} />
           </button>
         )}
