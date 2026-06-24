@@ -3,16 +3,21 @@ import { join } from 'path'
 import os from 'os'
 import { existsSync } from 'fs'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent, getResyncTurn, resetSession } from './agent'
+import { runAgent, getResyncTurn, resetSession, undoSession } from './agent'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 import {
   appendMessage,
   loadRecentMessages,
   appendTerminal,
   loadTerminalScrollback,
-  startNewConversation,
   getModel,
-  setModel
+  setModel,
+  getBackend,
+  setBackend,
+  getOllamaHost,
+  setOllamaHost,
+  getOllamaModel,
+  setOllamaModel
 } from './store'
 
 // node-pty is a native module; load lazily so a build issue doesn't crash boot.
@@ -148,16 +153,35 @@ ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prom
 // the main process whether a turn was in flight, and re-attaches to it.
 ipcMain.handle('agent:resync', () => getResyncTurn())
 
-// "New conversation": drop the SDK session (fresh context) and archive the visible
-// thread by raising the view floor. History stays in the DB.
+// "New conversation": drop the session (fresh context) and archive the visible
+// thread by raising the view floor (resetSession does both). History stays in the DB.
 ipcMain.handle('agent:newConversation', async () => {
   await resetSession()
-  startNewConversation()
+})
+// Reversible: un-archive the prior thread (restores the previous view floor).
+ipcMain.handle('agent:undoNewConversation', async () => {
+  await undoSession()
 })
 
 // Model preference (Sonnet default, switchable to Opus).
 ipcMain.handle('agent:getModel', () => getModel())
 ipcMain.handle('agent:setModel', (_e, model: string) => setModel(model))
+
+// Backend preference: which brain runs the turn (anthropic API / local ollama /
+// claude-cli subscription). Host/model for ollama point at laptop or a brain box.
+ipcMain.handle('agent:getBackendConfig', () => ({
+  backend: getBackend(),
+  ollamaHost: getOllamaHost(),
+  ollamaModel: getOllamaModel()
+}))
+ipcMain.handle(
+  'agent:setBackendConfig',
+  (_e, cfg: { backend?: string; ollamaHost?: string; ollamaModel?: string }) => {
+    if (cfg.backend != null) setBackend(cfg.backend)
+    if (cfg.ollamaHost != null) setOllamaHost(cfg.ollamaHost)
+    if (cfg.ollamaModel != null) setOllamaModel(cfg.ollamaModel)
+  }
+)
 
 // --- Auth IPC ---
 ipcMain.handle('auth:status', async () => ({

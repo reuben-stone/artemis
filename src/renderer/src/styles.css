@@ -93,6 +93,63 @@ html, body, #root {
 }
 .model-toggle:hover { color: var(--text); }
 .model-toggle.opus { color: #c79bff; border-color: #9b6bff66; background: #9b6bff14; }
+.backend-toggle {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.backend-toggle:hover { color: var(--text); }
+.backend-toggle.local { color: #27e0a8; border-color: #27e0a855; background: #27e0a814; }
+.ollama-field {
+  font-family: Menlo, monospace;
+  font-size: 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #27e0a855;
+  border-radius: 999px;
+  padding: 3px 8px;
+  width: 150px;
+  outline: none;
+  -webkit-app-region: no-drag;
+}
+.ollama-field.model { width: 120px; }
+.ollama-field::placeholder { color: var(--muted); }
+.undo-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 12px 9px 16px;
+  background: rgba(18, 20, 28, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--text);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  z-index: 60;
+  -webkit-app-region: no-drag;
+  animation: rowIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.undo-toast button {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #c79bff;
+  background: transparent;
+  border: 1px solid #9b6bff66;
+  border-radius: 999px;
+  padding: 4px 14px;
+  cursor: pointer;
+}
+.undo-toast button:hover { background: #9b6bff14; }
 .cost {
   font-variant-numeric: tabular-nums;
   font-size: 10px;
@@ -115,7 +172,7 @@ html, body, #root {
 .status-speaking { color: #a855f7; }
 .status-error { color: #ff4d5e; }
 
-.stage { flex: 1; display: grid; grid-template-columns: 1.2fr 0.85fr; min-height: 0; }
+.stage { flex: 1; display: grid; grid-template-columns: 1fr 1.1fr; min-height: 0; }
 
 /* left: orb fills the whole pane */
 .orb-pane {
@@ -416,6 +473,13 @@ html, body, #root {
   outline: none;
 }
 .chat-input textarea:focus { border-color: #9b6bff66; }
+.chat-input textarea::-webkit-scrollbar { width: 6px; }
+.chat-input textarea::-webkit-scrollbar-track { background: transparent; }
+.chat-input textarea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+.chat-input textarea::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); }
 .voice-toggle, .mic-toggle, .send {
   height: 38px;
   min-width: 38px;

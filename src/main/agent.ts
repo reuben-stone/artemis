@@ -5,16 +5,16 @@ import { promises as fs } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { glob } from 'glob'
-import { getApiKey } from './secrets'
+import { getModelClient } from './model'
 import { loadMemory, saveMemory } from './memory'
 import {
-  getModel,
   loadRecentMessages,
   appendMessage,
   saveTurn,
   loadLastTurn,
   markTurnClaimed,
   startNewConversation,
+  undoNewConversation,
   type StoredTurn
 } from './store'
 
@@ -481,27 +481,12 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
   }
 }
 
-// ─── Anthropic client ──────────────────────────────────────────────────────
+// ─── Message assembly ──────────────────────────────────────────────────────
 
-let _client: Anthropic | null = null
-
-async function getClient(): Promise<Anthropic> {
-  if (_client) return _client
-  const key = await getApiKey()
-  if (!key) {
-    throw new Error(
-      'No API key found. Set ANTHROPIC_API_KEY in your environment or add one in Artemis settings.'
-    )
-  }
-  _client = new Anthropic({ apiKey: key })
-  return _client
-}
-
-/** Convert SQLite message history into Anthropic MessageParam format.
+/** Convert SQLite message history into the canonical Anthropic MessageParam format.
  *  - Skip leading assistant messages (API requires first message to be user).
  *  - Merge consecutive same-role messages to satisfy the alternation constraint.
- *  - Mark the last assistant message as a cache point so Anthropic caches the
- *    conversation prefix (prompt caching: 90% cheaper on cache hits).
+ *  Backend-neutral: prompt-cache anchoring is the AnthropicClient's job, not this.
  */
 function buildMessages(
   history: { role: 'user' | 'assistant'; text: string }[],
@@ -520,24 +505,6 @@ function buildMessages(
       prev.content = (prev.content as string) + '\n\n' + m.text
     } else {
       params.push({ role: m.role, content: m.text })
-    }
-  }
-
-  // Mark the last assistant message as a cache anchor so the prefix is cached
-  const lastAssistantIdx = [...params].reverse().findIndex((m) => m.role === 'assistant')
-  if (lastAssistantIdx >= 0) {
-    const idx = params.length - 1 - lastAssistantIdx
-    const msg = params[idx]
-    params[idx] = {
-      role: 'assistant',
-      content: [
-        {
-          type: 'text',
-          text: msg.content as string,
-          // @ts-expect-error cache_control is a beta header not yet typed in sdk
-          cache_control: { type: 'ephemeral' }
-        }
-      ]
     }
   }
 
@@ -608,6 +575,13 @@ export async function resetSession(): Promise<void> {
   lastTurnId = null
 }
 
+// Reversible counterpart to resetSession: un-archive the prior thread (restore the
+// previous view floor and drop the fresh-start greeting). Backs the Undo toast.
+export async function undoSession(): Promise<void> {
+  undoNewConversation()
+  lastTurnId = null
+}
+
 // ─── Permission gate ───────────────────────────────────────────────────────
 
 export interface PermissionAsker {
@@ -653,68 +627,52 @@ export async function runAgent(
   send({ state: 'thinking' })
 
   try {
-    const client = await getClient()
+    // The brain for this turn — Anthropic API, local Ollama, or (later) the
+    // subscription CLI — chosen fresh from the backend preference. The loop below
+    // is identical regardless of which one we got.
+    const client = await getModelClient()
     const systemPrompt = await buildSystemPrompt()
     const history = loadRecentMessages(60)
-    const model = getModel()
 
-    // Build the message array: history + new user message, with cache anchor
+    // Build the canonical message array: history + new user message.
     const localMessages: Anthropic.MessageParam[] = buildMessages(history, prompt)
 
     let accText = ''
 
     // The agentic loop: stream response, execute tool calls, repeat until end_turn.
     while (true) {
-      let currentText = ''
       send({ state: 'thinking' })
 
-      const stream = client.messages.stream({
-        model,
-        max_tokens: 8096,
-        system: [
-          {
-            type: 'text',
-            text: systemPrompt,
-            // @ts-expect-error cache_control beta
-            cache_control: { type: 'ephemeral' }
-          }
-        ],
+      const turnStream = client.stream({
+        system: systemPrompt,
         messages: localMessages,
-        tools: TOOLS,
-        betas: ['prompt-caching-2024-07-31']
+        tools: TOOLS
       })
 
       // Stream text tokens to the renderer in real-time
-      for await (const event of stream as AsyncIterable<Anthropic.MessageStreamEvent>) {
-        if (
-          event.type === 'content_block_delta' &&
-          event.delta.type === 'text_delta'
-        ) {
-          const token = event.delta.text
-          currentText += token
-          accText += token
-          turn.text = accText
-          send({ token })
-          const now = Date.now()
-          if (now - lastPersist > 700) {
-            lastPersist = now
-            saveTurn(turn)
-          }
+      for await (const token of turnStream.tokens) {
+        accText += token
+        turn.text = accText
+        send({ token })
+        const now = Date.now()
+        if (now - lastPersist > 700) {
+          lastPersist = now
+          saveTurn(turn)
         }
       }
 
-      const msg = await stream.finalMessage()
+      const final = await turnStream.final()
 
       // Add the assistant's full response (text + any tool_use blocks) to local context
-      localMessages.push({ role: 'assistant', content: msg.content })
+      localMessages.push({ role: 'assistant', content: final.content })
 
-      if (msg.stop_reason !== 'tool_use') break // done — exit the loop
+      if (final.stopReason !== 'tool_use') break // done — exit the loop
 
       // Execute tool calls
       send({ state: 'executing' })
       const toolResults: Anthropic.ToolResultBlockParam[] = []
 
-      for (const block of msg.content) {
+      for (const block of final.content) {
         if (block.type !== 'tool_use') continue
 
         const toolInput = block.input as Record<string, unknown>

@@ -14,10 +14,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
     "@huggingface/transformers": "^4.2.0",
-    "glob": "^11.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "better-sqlite3": "^12.11.1",
+    "glob": "^11.1.0",
     "node-pty": "^1.0.0",
     "react-markdown": "^10.1.0",
     "remark-breaks": "^4.0.0",

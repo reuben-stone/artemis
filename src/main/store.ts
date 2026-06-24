@@ -83,6 +83,7 @@ function getDb(): Database.Database {
 // --- key/value meta ----------------------------------------------------------
 
 const VIEW_FLOOR = 'view_floor' // messages at/below this id are archived, not shown
+const PREV_VIEW_FLOOR = 'prev_view_floor' // the floor before the last new-conversation, for undo
 
 function getMeta(key: string): string | null {
   const row = getDb().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
@@ -103,8 +104,23 @@ function setMeta(key: string, value: string): void {
  * thread. History stays in the DB (archived), recoverable by lowering the floor.
  */
 export function startNewConversation(): void {
+  const prevFloor = getMeta(VIEW_FLOOR) ?? '0'
   const max = (getDb().prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages').get() as { m: number }).m
+  setMeta(PREV_VIEW_FLOOR, prevFloor)
   setMeta(VIEW_FLOOR, String(max))
+}
+
+/**
+ * Undo the most recent startNewConversation: delete any messages added since the
+ * floor was raised (e.g. the fresh-start greeting) and restore the previous floor,
+ * un-archiving the prior thread. The reversible alternative to a confirm dialog.
+ */
+export function undoNewConversation(): void {
+  const prev = getMeta(PREV_VIEW_FLOOR)
+  if (prev == null) return
+  const raisePoint = Number(getMeta(VIEW_FLOOR) ?? '0')
+  getDb().prepare('DELETE FROM messages WHERE id > ?').run(raisePoint)
+  setMeta(VIEW_FLOOR, prev)
 }
 
 // --- model preference --------------------------------------------------------
@@ -119,6 +135,45 @@ export function getModel(): string {
 
 export function setModel(model: string): void {
   setMeta(MODEL_KEY, model)
+}
+
+// --- model backend (which brain) ---------------------------------------------
+
+// 'anthropic' = metered Claude API (default), 'ollama' = local/home-box model,
+// 'claude-cli' = flat subscription via the claude CLI (not wired yet).
+// The backend seam lives in src/main/model/; see ROADMAP-TO-JARVIS.md Phase 8.
+const BACKEND_KEY = 'backend'
+const DEFAULT_BACKEND = 'anthropic'
+
+export function getBackend(): string {
+  return getMeta(BACKEND_KEY) ?? DEFAULT_BACKEND
+}
+
+export function setBackend(backend: string): void {
+  setMeta(BACKEND_KEY, backend)
+}
+
+// Ollama connection: host is configurable so the same code points at the laptop
+// (localhost) or a dedicated brain box on the LAN / Tailscale.
+const OLLAMA_HOST_KEY = 'ollama_host'
+const DEFAULT_OLLAMA_HOST = 'http://localhost:11434'
+const OLLAMA_MODEL_KEY = 'ollama_model'
+const DEFAULT_OLLAMA_MODEL = 'qwen2.5-coder:7b'
+
+export function getOllamaHost(): string {
+  return getMeta(OLLAMA_HOST_KEY) ?? DEFAULT_OLLAMA_HOST
+}
+
+export function setOllamaHost(host: string): void {
+  setMeta(OLLAMA_HOST_KEY, host)
+}
+
+export function getOllamaModel(): string {
+  return getMeta(OLLAMA_MODEL_KEY) ?? DEFAULT_OLLAMA_MODEL
+}
+
+export function setOllamaModel(model: string): void {
+  setMeta(OLLAMA_MODEL_KEY, model)
 }
 
 // --- transcript ---------------------------------------------------------------

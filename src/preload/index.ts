@@ -56,8 +56,22 @@ const api = {
       ipcRenderer.invoke('agent:run', { requestId, prompt }),
     // Start a fresh conversation: new SDK context + archived transcript view.
     newConversation: (): Promise<void> => ipcRenderer.invoke('agent:newConversation'),
+    // Reverse the last new-conversation: restore the prior thread.
+    undoNewConversation: (): Promise<void> => ipcRenderer.invoke('agent:undoNewConversation'),
     getModel: (): Promise<string> => ipcRenderer.invoke('agent:getModel'),
     setModel: (model: string): Promise<void> => ipcRenderer.invoke('agent:setModel', model),
+    // Which brain runs turns: 'anthropic' (metered API), 'ollama' (local/box), or
+    // 'claude-cli' (flat subscription, not wired yet). Host/model are for ollama.
+    getBackendConfig: (): Promise<{
+      backend: string
+      ollamaHost: string
+      ollamaModel: string
+    }> => ipcRenderer.invoke('agent:getBackendConfig'),
+    setBackendConfig: (cfg: {
+      backend?: string
+      ollamaHost?: string
+      ollamaModel?: string
+    }): Promise<void> => ipcRenderer.invoke('agent:setBackendConfig', cfg),
     // Ask main whether a turn was streaming when the renderer reloaded, so the
     // fresh page can re-attach instead of dropping the answer.
     resync: (): Promise<null | {

@@ -50,7 +50,7 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 
 - **One focused change at a time.** Build, confirm it works, then move on — especially for self-modification.
 - **Reversible and gated by default.** New powers ship behind the same permission posture; nothing destructive runs unasked.
-- **Presence over features.** A Jarvis that *feels* alive beats a pile of capabilities. Latency, voice quality, and responsiveness are features.
+- **Presence over features.** A Jarvis that *feels* alive beats a pile of capabilities. Latency, voice quality, and responsiveness are features. **Make it measurable:** target TTFT < 800ms, end-to-end voice round-trip (speech end → first spoken word) < 2s. Track these, don't just vibe them — a regression here is a presence regression.
 - **Memory is the moat.** The longer Artemis remembers you well, the more it becomes *yours*. Wire it deep and early.
 - **Own the stack.** Where possible, prefer code we write and understand over opaque SDK abstractions. This keeps the architecture evolvable.
 - **Batch main-process work.** Group `src/main` edits so we take the session-killing restart once, not repeatedly.
@@ -64,7 +64,7 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 
 1. **Graceful restart (level 1) — ✅ DONE.** Transcript + terminal scrollback persist to SQLite and restore on boot. A restart is a ~1s blink that returns with everything intact. `src/main/store.ts` is the live backbone.
 
-2. **Sidecar brain (level 2 — future).** Move the agent loop into a persistent local daemon. Electron becomes a disposable face that reconnects. Only editing the daemon's own code restarts the brain. Scheduled alongside Phase 6 (proactivity), which needs the same always-on process.
+2. **Sidecar brain (level 2 — PULL EARLIER).** Move the agent loop into a persistent local daemon. Electron becomes a disposable face that reconnects. Only editing the daemon's own code restarts the brain. *Originally slated alongside Phase 6, but this is the single highest-leverage structural piece — it simultaneously unblocks safe self-modification (Phase 9), proactivity (Phase 6), and ends session-killing on every `src/main` edit. Deferring it contradicts calling it the cornerstone. Recommend building it right after voice basics, before reach/senses pile more code onto a foundation we've already decided is temporary.*
 
 ### Data & persistence — decided
 
@@ -74,7 +74,7 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 
 ---
 
-## Architecture milestone — own the agent loop 🔴  ← *active*
+## Architecture milestone — own the agent loop 🔴  ← ✅ DONE (commit `b01c148`)
 *Drop the Claude Agent SDK. Build the tool loop ourselves. Unlock prompt caching and model portability.*
 
 ### Why
@@ -112,12 +112,23 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 ### Status
 
 - ✅ Planning complete
-- ◻︎ Implement raw SDK tool loop (`agent.ts` rewrite)
-- ◻︎ Tool implementations: Read, Write, Edit, Glob, Grep, Bash, WebFetch, save_memory, recall_memory
-- ◻︎ Prompt caching on system prompt + history turns
-- ◻︎ ModelClient interface (Anthropic implementation first; Ollama stub)
-- ◻︎ Remove `@anthropic-ai/claude-agent-sdk` dependency
-- ◻︎ Verify: same tool execution behaviour, streaming, permission gating
+- ✅ Implement raw SDK tool loop (`agent.ts` rewrite, commit `b01c148`)
+- ✅ Tool implementations: Read, Write, Edit, Glob, Grep, Bash, WebFetch, save_memory, recall_memory
+- ✅ Prompt caching on system prompt + history turns (cache points in `agent.ts`)
+- ✅ ModelClient interface — extracted to `src/main/model/` (seam in `types.ts`, factory in `index.ts`). **Anthropic** (default, owns prompt caching) + **Ollama** (configurable host → laptop or brain box) backends implemented; **claude-cli** (subscription) is a documented stub (needs delegated-turn mode that bypasses the permission gate). Backend/host/model are SQLite-stored prefs (`store.ts`), settable via `agent:setBackendConfig` IPC. Loop in `agent.ts` is now backend-agnostic.
+- ✅ Remove `@anthropic-ai/claude-agent-sdk` dependency
+- ✅ Verify: same tool execution behaviour, streaming, permission gating
+
+> **⚠️ Billing consequence — do not lose track of this.** Owning the loop means we
+> now call the raw API with an `sk-ant-api…` key (`agent.ts` `getClient()` →
+> `new Anthropic({ apiKey })`). That is **metered pay-per-token billing**, a
+> *separate rail* from the flat Pro/Max subscription. The old Agent SDK rode the
+> subscription only because it spawned Claude Code (OAuth via `~/.claude`) under
+> the hood. "Own the transparent loop" and "ride the flat subscription" are
+> mutually exclusive through supported means. The flat rate is recoverable only by
+> delegating a turn to the `claude -p` CLI as a ModelClient backend (see Phase 8),
+> or by going local (zero marginal cost). Titlebar cost meter is now *real* spend,
+> not an estimate.
 
 ---
 
@@ -155,7 +166,8 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 ## Phase 3 — Living memory 🔴
 *Remember everything that matters, recall it at the right moment.*
 
-- **Semantic tier** — embed each memory fact, recall by similarity via `sqlite-vec`. Inject only relevant facts per turn (replaces "inject everything every turn").
+- **Semantic tier** — embed each memory fact, recall by similarity via `sqlite-vec`. Inject only relevant facts per turn (replaces "inject everything every turn" — currently every fact is injected on every turn in `agent.ts`, which both dilutes attention and burns tokens).
+- **Garbage collection + conflict resolution** — dedup near-identical facts, supersede stale ones, resolve contradictions instead of accumulating forever. Memory that only grows becomes noise (and cost). This is a quality *and* a billing lever.
 - **Auto-capture** — propose durable facts at the end of meaningful turns
 - **Episodic log** — summaries of past conversations, searchable
 - **Per-project memory** scoping
@@ -173,6 +185,7 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 *Act beyond the repo.*
 
 - **MCP integration** — calendar, email, GitHub, Slack, notes, smart home — gated by permission flow
+- **Trust boundary for untrusted content** — the moment Artemis can *read* email/web AND *act* (send, book, run), prompt injection becomes a real attack surface ("ignore previous instructions and …" hidden in an email/page). The current `DANGEROUS` regex blocklist won't catch this. Required: treat all fetched/received content as untrusted data (never instructions), and require explicit confirmation for any *outward-effecting* action (send/post/pay/delete), separate from the existing command gate.
 - **Skill library** — reusable named procedures Artemis can invoke
 - **Web actions** beyond fetch/search — structured browsing
 - **Done when:** "Artemis, book that and email them the link" works end-to-end
@@ -209,7 +222,7 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 *Artemis builds Artemis.*
 
 - **Guided self-modification** — proposes, diffs, and (with approval) applies changes to its own code, then rebuilds
-- **Eval loop** — small harness so mind changes can be measured, not just vibe-checked
+- **Eval loop** — small harness so mind changes can be measured, not just vibe-checked. **A minimal version should be pulled forward to ~Phase 2** (see Current sprint): every change today is verified by restarting and talking to it. A ~10-case smoke harness (does it still read / edit / remember / speak / gate correctly?) is cheap insurance that makes every later phase faster to trust — and is a prerequisite for safe self-modification, not a successor to it.
 - **Changelog memory** — remembers what it changed about itself and why
 - **Done when:** "Artemis, improve your own X" is a safe, routine operation
 
@@ -220,9 +233,12 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 1. ✅ ~~Graceful restart (cornerstone level 1)~~
 2. ✅ ~~Phase 0 — foundation~~
 3. ✅ ~~Phase 1 (partial) — STT working, text barge-in done~~
-4. **Architecture milestone — own the agent loop** ← *now*
-5. Phase 1 completion — wake word + VAD (after architecture settled)
-6. Phase 2 — neural TTS
+4. ✅ ~~Architecture milestone — own the agent loop~~ (commit `b01c148`)
+5. ✅ ~~`ModelClient` abstraction~~ — built in `src/main/model/`: Anthropic + Ollama backends, claude-cli stubbed. Switch via `window.artemis.agent.setBackendConfig({backend:'ollama', ollamaHost, ollamaModel})`. Renderer backend-picker UI still TODO (🟢, no restart).
+6. **Minimal eval harness** — ~10 smoke cases before more self-modification (pulled forward from Phase 9).
+7. **Sidecar brain (cornerstone L2)** — pulled earlier; ends session-killing and unblocks proactivity + safe self-mod.
+8. Phase 1 completion — wake word + VAD
+9. Phase 2 — neural TTS
 
 ---
 

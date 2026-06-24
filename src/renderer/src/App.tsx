@@ -26,7 +26,12 @@ export default function App() {
   const [permission, setPermission] = useState<PermissionReq | null>(null)
   const [cost, setCost] = useState(0) // running session cost (USD)
   const [micHint, setMicHint] = useState<string | null>(null)
+  const [showUndo, setShowUndo] = useState(false) // "new conversation · Undo" toast
   const [model, setModel] = useState('claude-sonnet-4-6')
+  // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
+  const [backend, setBackend] = useState('anthropic')
+  const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
+  const [ollamaModel, setOllamaModel] = useState('qwen2.5-coder:7b')
 
   const amplitudeRef = useRef(0)
   const { speak, cancel, voices, selectedVoice, setVoice, previewVoice } = useVoice(
@@ -55,6 +60,8 @@ export default function App() {
   // Tokens arrive faster than we want to re-render markdown; coalesce a burst into
   // a single paint per animation frame so the transcript streams smoothly.
   const flushRaf = useRef<number | null>(null)
+  // Auto-dismiss timer for the new-conversation Undo toast.
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const flushStream = useCallback(() => {
     flushRaf.current = null
@@ -94,6 +101,25 @@ export default function App() {
     setModel((m) => {
       const next = m === 'claude-opus-4-8' ? 'claude-sonnet-4-6' : 'claude-opus-4-8'
       window.artemis?.agent?.setModel(next)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    window.artemis?.agent?.getBackendConfig().then((c) => {
+      if (!c) return
+      if (c.backend) setBackend(c.backend)
+      if (c.ollamaHost) setOllamaHost(c.ollamaHost)
+      if (c.ollamaModel) setOllamaModel(c.ollamaModel)
+    })
+  }, [])
+
+  // Toggle the brain between cloud (Claude API) and local (Ollama). Like the model
+  // toggle, it's read fresh each turn, so it takes effect on the next message.
+  const toggleBackend = useCallback(() => {
+    setBackend((b) => {
+      const next = b === 'ollama' ? 'anthropic' : 'ollama'
+      window.artemis?.agent?.setBackendConfig({ backend: next })
       return next
     })
   }, [])
@@ -358,8 +384,17 @@ export default function App() {
   }
 
   // New conversation: fresh SDK context + archived transcript view. History is kept
-  // in the DB (the main process just raises the view floor), so nothing is lost.
+  // in the DB (the main process just raises the view floor), so nothing is lost —
+  // which is why we offer an Undo toast instead of a blocking confirm dialog.
   const newConversation = useCallback(async () => {
+    // In-flight guard: the one genuinely surprising case — starting fresh mid-turn
+    // would orphan the running answer. Confirm before discarding it.
+    if (busy && !window.confirm('Artemis is still responding — start a new conversation anyway?')) {
+      return
+    }
+    // Only offer Undo if there was a real thread to archive (a user message).
+    const hadThread = messages.some((m) => m.role === 'user')
+
     await window.artemis?.agent?.newConversation()
     cancel()
     cancelFlush()
@@ -378,7 +413,25 @@ export default function App() {
     setMessages([{ role: 'assistant', text: greeting }])
     window.artemis?.history?.append('assistant', greeting)
     if (voiceOnRef.current) setTimeout(() => speak(greeting), 200)
-  }, [cancel, cancelFlush, speak])
+
+    if (hadThread) {
+      setShowUndo(true)
+      if (undoTimer.current) clearTimeout(undoTimer.current)
+      undoTimer.current = setTimeout(() => setShowUndo(false), 6000)
+    }
+  }, [busy, messages, cancel, cancelFlush, speak])
+
+  // Undo a new-conversation within the toast window: drop the fresh-start greeting
+  // and restore the archived thread.
+  const undoNewConversation = useCallback(async () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current)
+    setShowUndo(false)
+    cancel()
+    await window.artemis?.agent?.undoNewConversation()
+    const restored = (await window.artemis?.history?.load()) ?? []
+    setMessages(restored as Message[])
+    setState('idle')
+  }, [cancel])
 
   if (needsKey) {
     return <KeySetup onDone={() => setNeedsKey(false)} />
@@ -397,16 +450,50 @@ export default function App() {
             ＋ new
           </button>
           <button
-            className={`model-toggle ${model === 'claude-opus-4-8' ? 'opus' : ''}`}
-            onClick={toggleModel}
+            className={`backend-toggle ${backend === 'ollama' ? 'local' : ''}`}
+            onClick={toggleBackend}
             title={
-              model === 'claude-opus-4-8'
-                ? 'Opus 4.8 — max capability (slower, pricier). Click for Sonnet.'
-                : 'Sonnet 4.6 — fast & efficient. Click for Opus.'
+              backend === 'ollama'
+                ? 'Local model (Ollama). Click for Cloud (Claude API).'
+                : 'Cloud — Claude API (metered). Click for Local (Ollama).'
             }
           >
-            {model === 'claude-opus-4-8' ? 'Opus' : 'Sonnet'}
+            {backend === 'ollama' ? '⌂ Local' : '☁ Cloud'}
           </button>
+          {backend === 'ollama' ? (
+            <>
+              <input
+                className="ollama-field"
+                value={ollamaHost}
+                onChange={(e) => setOllamaHost(e.target.value)}
+                onBlur={() => window.artemis?.agent?.setBackendConfig({ ollamaHost })}
+                title="Ollama host — localhost, or a brain box e.g. http://192.168.1.20:11434"
+                placeholder="http://localhost:11434"
+                spellCheck={false}
+              />
+              <input
+                className="ollama-field model"
+                value={ollamaModel}
+                onChange={(e) => setOllamaModel(e.target.value)}
+                onBlur={() => window.artemis?.agent?.setBackendConfig({ ollamaModel })}
+                title="Ollama model, e.g. qwen2.5-coder:7b"
+                placeholder="qwen2.5-coder:7b"
+                spellCheck={false}
+              />
+            </>
+          ) : (
+            <button
+              className={`model-toggle ${model === 'claude-opus-4-8' ? 'opus' : ''}`}
+              onClick={toggleModel}
+              title={
+                model === 'claude-opus-4-8'
+                  ? 'Opus 4.8 — max capability (slower, pricier). Click for Sonnet.'
+                  : 'Sonnet 4.6 — fast & efficient. Click for Opus.'
+              }
+            >
+              {model === 'claude-opus-4-8' ? 'Opus' : 'Sonnet'}
+            </button>
+          )}
           <button
             className={`term-toggle ${showTerminal ? 'on' : ''}`}
             onClick={() => setShowTerminal((v) => !v)}
@@ -489,6 +576,13 @@ export default function App() {
 
       {permission && (
         <PermissionDialog req={permission} onRespond={respondPermission} />
+      )}
+
+      {showUndo && (
+        <div className="undo-toast" role="status">
+          <span>Started a new conversation</span>
+          <button onClick={undoNewConversation}>Undo</button>
+        </div>
       )}
     </div>
   )
