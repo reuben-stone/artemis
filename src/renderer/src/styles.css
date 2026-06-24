@@ -563,12 +563,24 @@ html, body, #root {
   position: absolute;
   top: 14px;
   left: 14px;
-  right: 14px;
+  width: min(440px, 60%);
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: calc(100% - 28px);
+  max-height: 56%;
   pointer-events: none; /* orb shows through the gaps; cards re-enable below */
+  z-index: 5;
+}
+.orb-dock-bottom {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  width: min(400px, 56%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 42%;
+  pointer-events: none;
   z-index: 5;
 }
 .dock-card {

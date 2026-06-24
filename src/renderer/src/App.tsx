@@ -622,6 +622,16 @@ export default function App() {
               />
             </div>
           )}
+          {showPrs && (
+            <div className="orb-dock-bottom">
+              <PrReviewQueue
+                prs={prs}
+                onToggle={togglePr}
+                onClearReviewed={clearReviewedPrs}
+                onClose={() => setShowPrs(false)}
+              />
+            </div>
+          )}
         </section>
         <section className="side-col">
           {showTerminal && (
@@ -678,15 +688,6 @@ export default function App() {
           onRemove={removeProject}
           onSelect={selectProject}
           onClose={() => setShowProjects(false)}
-        />
-      )}
-
-      {showPrs && (
-        <PrReviewQueue
-          prs={prs}
-          onToggle={togglePr}
-          onClearReviewed={clearReviewedPrs}
-          onClose={() => setShowPrs(false)}
         />
       )}
 
