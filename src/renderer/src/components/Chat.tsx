@@ -45,6 +45,15 @@ export interface Message {
   tools?: ToolStep[]
 }
 
+// One-click starters shown on a fresh conversation (no user turn yet). Tuned to the
+// multi-repo ops use case — each sends a ready-made prompt.
+const QUICK_CHIPS: { label: string; prompt: string }[] = [
+  { label: 'Ecosystem status', prompt: 'Give me a status overview across all my projects.' },
+  { label: 'What needs attention?', prompt: 'Across my repos, what needs my attention right now?' },
+  { label: 'Open PRs', prompt: 'What pull requests are open and waiting for review?' },
+  { label: 'Plan my day', prompt: 'Based on the current state of my projects, what should I focus on today?' }
+]
+
 const STATE_LABEL: Record<OrbState, string> = {
   idle: 'Thinking',
   thinking: 'Thinking',
@@ -159,6 +168,8 @@ export default function Chat({
 
   const last = messages[messages.length - 1]
   const streaming = busy && last?.role === 'assistant'
+  // A conversation with no user turn yet (fresh start / after New chat) — show starters.
+  const fresh = !messages.some((m) => m.role === 'user')
   // Show the "Thinking" row only before anything to show — once a tool starts (or text
   // streams), the bubble's timeline/text takes over.
   const awaiting = streaming && last.text.length === 0 && !last.tools?.length
@@ -231,6 +242,16 @@ export default function Chat({
           <div className="chat-empty">Ask Artemis to operate on your projects…</div>
         )}
         {renderedMessages}
+
+        {fresh && !busy && (
+          <div className="quick-chips">
+            {QUICK_CHIPS.map((c) => (
+              <button key={c.label} className="quick-chip" onClick={() => onSend(c.prompt)}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {awaiting && (
           <div className="row assistant">
