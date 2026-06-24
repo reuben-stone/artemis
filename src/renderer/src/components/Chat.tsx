@@ -25,6 +25,8 @@ export default function Chat({
   voiceOn,
   onToggleVoice,
   onSend,
+  onQueue,
+  queueCount = 0,
   listening,
   micSupported,
   onMic,
@@ -36,6 +38,8 @@ export default function Chat({
   voiceOn: boolean
   onToggleVoice: () => void
   onSend: (text: string) => void
+  onQueue?: (text: string) => void
+  queueCount?: number
   listening: boolean
   micSupported: boolean
   onMic: () => void
@@ -100,7 +104,13 @@ export default function Chat({
 
   const submit = () => {
     const text = draft.trim()
-    if (!text || busy) return
+    if (!text) return
+    if (busy) {
+      // Queue the message to be sent after the current turn completes.
+      onQueue?.(text)
+      setDraft('')
+      return
+    }
     onSend(text)
     setDraft('')
     stick.current = true
@@ -188,6 +198,9 @@ export default function Chat({
       )}
 
       {micHint && <div className="mic-hint">{micHint}</div>}
+      {queueCount > 0 && (
+        <div className="queue-badge">{queueCount} queued</div>
+      )}
 
       <div className="chat-input">
         <button
@@ -219,8 +232,8 @@ export default function Chat({
             }
           }}
         />
-        <button className="send" onClick={submit} disabled={busy || !draft.trim()}>
-          {busy ? '…' : '↑'}
+        <button className="send" onClick={submit} disabled={!draft.trim()}>
+          {busy && !draft.trim() ? '…' : '↑'}
         </button>
       </div>
     </div>

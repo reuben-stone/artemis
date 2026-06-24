@@ -448,6 +448,15 @@ html, body, #root {
 }
 .send { background: #9b6bff; border: none; font-weight: 700; }
 .send:disabled { opacity: 0.4; cursor: default; }
+.queue-badge {
+  margin: 0 12px 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #a78bfa;
+  background: #9b6bff18;
+  border: 1px solid #9b6bff33;
+  border-radius: 8px;
+}
 
 /* permission modal */
 .modal-backdrop {

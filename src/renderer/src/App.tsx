@@ -42,6 +42,16 @@ export default function App() {
   const activeReq = useRef<string | null>(null)
   const acc = useRef('')
   const reqCounter = useRef(0)
+
+  // Text barge-in: messages typed while busy are held here and drained FIFO
+  // after each turn completes. They never touch `messages` state until processed,
+  // preserving the invariant that the last message is the streaming assistant bubble.
+  const queueRef = useRef<string[]>([])
+  const [queueCount, setQueueCount] = useState(0)
+  // Keep latest `send` accessible inside the onEvent closure without adding it as a dep.
+  // (send's identity changes when voiceOn/speak change; a ref always has the current one.)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sendRef = useRef<(text: string) => Promise<void>>(null as any)
   // Tokens arrive faster than we want to re-render markdown; coalesce a burst into
   // a single paint per animation frame so the transcript streams smoothly.
   const flushRaf = useRef<number | null>(null)
@@ -207,6 +217,13 @@ export default function App() {
         else setState('idle')
         setBusy(false)
         activeReq.current = null
+        // Drain one queued message. Defer by one tick so the completed turn
+        // renders before the next one's empty assistant bubble appears.
+        const next = queueRef.current.shift()
+        if (next) {
+          setQueueCount(queueRef.current.length)
+          setTimeout(() => sendRef.current(next), 50)
+        }
       }
       if (e.error) {
         cancelFlush()
@@ -215,6 +232,12 @@ export default function App() {
         setBusy(false)
         activeReq.current = null
         setTimeout(() => setState('idle'), 2500)
+        // Still drain the queue after an error — the user's message shouldn't be lost.
+        const next = queueRef.current.shift()
+        if (next) {
+          setQueueCount(queueRef.current.length)
+          setTimeout(() => sendRef.current(next), 2600) // wait past the error state reset
+        }
       }
     })
     return () => {
@@ -234,6 +257,11 @@ export default function App() {
     if (permission) window.artemis?.agent?.respondPermission(permission.permId, allow)
     setPermission(null)
   }
+
+  const onQueue = useCallback((text: string) => {
+    queueRef.current.push(text)
+    setQueueCount(queueRef.current.length)
+  }, [])
 
   const send = useCallback(
     async (text: string) => {
@@ -271,6 +299,9 @@ export default function App() {
     },
     [voiceOn, speak]
   )
+  // Keep the ref current on every render so the onEvent drain always calls the
+  // latest closure (which captures the current voiceOn / speak values).
+  sendRef.current = send
 
   // Voice input (Phase 1 — ears). Capture drives the orb amplitude from your live
   // voice; transcription is a swappable seam (agent/transcribe.ts). On a final
@@ -445,6 +476,8 @@ export default function App() {
               voiceOn={voiceOn}
               onToggleVoice={toggleVoice}
               onSend={send}
+              onQueue={onQueue}
+              queueCount={queueCount}
               listening={speech.listening}
               micSupported={speech.supported}
               onMic={toggleMic}
