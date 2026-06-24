@@ -262,16 +262,18 @@ export default function App() {
   // transcript we send it; until the Whisper engine is wired we show a gentle hint.
   const handleAudio = useCallback(
     async (samples: Float32Array, sampleRate: number) => {
-      setMicHint('Transcribing… (the first time downloads the model)')
+      setMicHint('Transcribing… (the first time downloads the model — can take a minute)')
       setState('thinking')
-      const text = await transcribe(samples, sampleRate)
+      const { text, error } = await transcribe(samples, sampleRate)
+      setState('idle')
       if (text && text.trim()) {
         setMicHint(null)
-        setState('idle')
         send(text.trim())
       } else {
-        setMicHint("Didn't catch that — try again, or type.")
-        setState('idle')
+        // Leave terminal hints up long enough to read/report; errors longer.
+        const msg = error ? `Transcription failed: ${error}` : "Didn't catch that — try again, or type."
+        setMicHint(msg)
+        window.setTimeout(() => setMicHint((h) => (h === msg ? null : h)), error ? 20000 : 6000)
       }
     },
     [send]
@@ -288,18 +290,19 @@ export default function App() {
     }
   }, [speech, cancel])
 
-  // Reflect listening in the orb; surface mic errors as a hint; auto-clear hints.
+  // Reflect listening in the orb; surface mic-capture errors (self-clearing). Note:
+  // transcription hints are managed in handleAudio so the "Transcribing…" message is
+  // not wiped while a slow first-time model download is still in flight.
   useEffect(() => {
     setState((s) => (speech.listening ? 'listening' : s === 'listening' ? 'idle' : s))
   }, [speech.listening])
   useEffect(() => {
-    if (speech.error) setMicHint(speech.error)
-  }, [speech.error])
-  useEffect(() => {
-    if (!micHint) return
-    const id = window.setTimeout(() => setMicHint(null), 6000)
+    if (!speech.error) return
+    const msg = speech.error
+    setMicHint(msg)
+    const id = window.setTimeout(() => setMicHint((h) => (h === msg ? null : h)), 8000)
     return () => window.clearTimeout(id)
-  }, [micHint])
+  }, [speech.error])
 
   const toggleVoice = () => {
     setVoiceOn((v) => {

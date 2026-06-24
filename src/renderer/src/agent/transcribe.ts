@@ -32,10 +32,15 @@ function getWorker(): Worker {
   return worker
 }
 
+export interface TranscriptionResult {
+  text: string | null
+  error?: string
+}
+
 export async function transcribe(
   samples: Float32Array,
   _sampleRate: number
-): Promise<string | null> {
+): Promise<TranscriptionResult> {
   try {
     const w = getWorker()
     const id = ++seq
@@ -44,10 +49,11 @@ export async function transcribe(
       // transfer the sample buffer to avoid a copy (we don't reuse it)
       w.postMessage({ id, samples }, [samples.buffer])
     })
-    return text.trim() || null
+    return { text: text.trim() || null }
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
     console.error('[artemis] transcription failed:', err)
-    return null
+    return { text: null, error: message }
   }
 }
 
