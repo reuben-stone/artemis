@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -111,6 +111,39 @@ export default function Chat({
   const streaming = busy && last?.role === 'assistant'
   const awaiting = streaming && last.text.length === 0
 
+  // Memoize the message bubbles so typing in the textarea (local `draft` state) does
+  // NOT re-render the whole transcript through ReactMarkdown — the cause of the typing
+  // lag on long conversations. Recomputes only when messages or streaming change.
+  const renderedMessages = useMemo(
+    () =>
+      messages.map((m, i) => {
+        const isLast = i === messages.length - 1
+        const isStreamingBubble = isLast && streaming && m.role === 'assistant'
+        if (isStreamingBubble && m.text.length === 0) return null // shown as thinking row
+        return (
+          <div key={i} className={`row ${m.role}`}>
+            <div className="avatar">{m.role === 'user' ? 'You' : '◈'}</div>
+            <div className={`bubble ${m.role}`}>
+              {m.role === 'assistant' ? (
+                <div className="md">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkBreaks]}
+                    components={mdComponents}
+                  >
+                    {m.text}
+                  </ReactMarkdown>
+                  {isStreamingBubble && <span className="caret" />}
+                </div>
+              ) : (
+                m.text
+              )}
+            </div>
+          </div>
+        )
+      }),
+    [messages, streaming]
+  )
+
   return (
     <div className="chat">
       <div
@@ -131,31 +164,7 @@ export default function Chat({
         {messages.length === 0 && (
           <div className="chat-empty">Ask Artemis to operate on your projects…</div>
         )}
-        {messages.map((m, i) => {
-          const isLast = i === messages.length - 1
-          const isStreamingBubble = isLast && streaming && m.role === 'assistant'
-          if (isStreamingBubble && m.text.length === 0) return null // rendered as thinking row below
-          return (
-            <div key={i} className={`row ${m.role}`}>
-              <div className="avatar">{m.role === 'user' ? 'You' : '◈'}</div>
-              <div className={`bubble ${m.role}`}>
-                {m.role === 'assistant' ? (
-                  <div className="md">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkBreaks]}
-                      components={mdComponents}
-                    >
-                      {m.text}
-                    </ReactMarkdown>
-                    {isStreamingBubble && <span className="caret" />}
-                  </div>
-                ) : (
-                  m.text
-                )}
-              </div>
-            </div>
-          )
-        })}
+        {renderedMessages}
 
         {awaiting && (
           <div className="row assistant">
