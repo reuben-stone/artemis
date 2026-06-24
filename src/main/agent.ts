@@ -592,15 +592,31 @@ async function toolEcosystemStatus(): Promise<string> {
       }
       const branch = (await run('git rev-parse --abbrev-ref HEAD')) || '(no git)'
       const status = await run('git status --porcelain')
-      const dirty = status ? status.split('\n').length : 0
-      // Single-quote the format: it has spaces and parens that the shell would
-      // otherwise split into separate args / treat as a subshell (→ empty result).
+      const changed = status ? status.split('\n').filter(Boolean) : []
+      // Single-quote formats with spaces: the shell would otherwise split them into
+      // separate args / treat parens as a subshell (→ empty result).
       const last = (await run("git log -1 --pretty=format:'%h %s (%cr)'")) || '(no commits)'
+      const recent = (await run("git log --since='7 days ago' --oneline"))
+        .split('\n')
+        .filter(Boolean).length
       const ahead = (await run('git rev-list --count @{u}..HEAD')) || '0'
       const behind = (await run('git rev-list --count HEAD..@{u}')) || '0'
       const sync = ahead !== '0' || behind !== '0' ? ` [↑${ahead} ↓${behind}]` : ''
       const star = p.path === activePath ? ' ←active' : ''
-      return `• ${p.name}${star} — ${branch}${sync}, ${dirty} uncommitted file(s)\n    last: ${last}\n    ${p.path}`
+
+      const lines = [
+        `• ${p.name}${star} — ${branch}${sync}, ${changed.length} uncommitted file(s)`,
+        `    last: ${last}`,
+        `    activity: ${recent} commit(s) in last 7 days`
+      ]
+      if (changed.length) {
+        // Strip the porcelain status prefix (e.g. " M ", "?? ") to bare paths.
+        const files = changed.map((l) => l.slice(3))
+        const shown = files.slice(0, 6).join(', ')
+        lines.push(`    changed: ${shown}${files.length > 6 ? ` (+${files.length - 6} more)` : ''}`)
+      }
+      lines.push(`    ${p.path}`)
+      return lines.join('\n')
     })
   )
 
