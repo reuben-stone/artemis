@@ -13,27 +13,17 @@ env.allowLocalModels = false
 // Single-threaded avoids needing COOP/COEP headers for SharedArrayBuffer.
 if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.numThreads = 1
 
-// The default (4-bit / MatMulNBits) variant fails to build an onnxruntime-web session
-// ("Missing required scale"). Force a compatible precision: q8 first (small + fast),
-// falling back to fp32 (largest, most compatible) if q8's session won't build.
+// On WASM the default dtype is q8, and this model's q8 decoder ships broken 4-bit
+// (MatMulNBits) ops that onnxruntime-web can't build a session from — the session is
+// created lazily at first inference, so a load-time fallback never sees the failure.
+// Force genuinely unquantized fp32: no quantization, no MatMulNBits, fully supported.
 const MODEL = 'Xenova/whisper-tiny.en'
-const DTYPES = ['q8', 'fp32'] as const
 
 let asr: Promise<AutomaticSpeechRecognitionPipeline> | null = null
-async function loadAsr(): Promise<AutomaticSpeechRecognitionPipeline> {
-  let lastErr: unknown
-  for (const dtype of DTYPES) {
-    try {
-      return (await pipeline('automatic-speech-recognition', MODEL, {
-        dtype
-      })) as AutomaticSpeechRecognitionPipeline
-    } catch (err) {
-      lastErr = err
-    }
-  }
-  throw lastErr
-}
-const getAsr = (): Promise<AutomaticSpeechRecognitionPipeline> => (asr ??= loadAsr())
+const getAsr = (): Promise<AutomaticSpeechRecognitionPipeline> =>
+  (asr ??= pipeline('automatic-speech-recognition', MODEL, {
+    dtype: 'fp32'
+  }) as Promise<AutomaticSpeechRecognitionPipeline>)
 
 self.onmessage = async (e: MessageEvent<{ id: number; samples: Float32Array }>) => {
   const { id, samples } = e.data
