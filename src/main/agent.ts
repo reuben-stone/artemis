@@ -55,6 +55,14 @@ async function buildSystemPrompt(): Promise<string> {
     parts.push('Your name is Artemis. You are a Claude-based operator.')
   }
 
+  // Durable self-model — keeps Artemis accurate about how it's actually built, so it
+  // stops hallucinating about its own architecture/memory. High-altitude by design.
+  try {
+    parts.push(await fs.readFile(join(repoRoot(), 'ARTEMIS-CORE.md'), 'utf8'))
+  } catch {
+    // optional — absence just means a thinner self-model
+  }
+
   try {
     const { index, facts } = await loadMemory()
     if (facts.length) {
@@ -97,6 +105,21 @@ async function buildSystemPrompt(): Promise<string> {
 
   parts.push(
     'TOOL DISCIPLINE — for conversational replies, greetings, or answers you already know, respond directly without calling any tools. Only use Read, Grep, Glob, Bash, Edit, or Write when the task genuinely requires inspecting or changing files. Unnecessary tool calls add latency.'
+  )
+
+  parts.push(
+    [
+      'CONVERSATION CONTEXT — you are given only the *active* conversation thread, not',
+      'your entire history. Earlier conversations are archived in the local SQLite store',
+      'below a "view floor"; raising that floor is exactly what the "new conversation"',
+      'control does. Archived threads are NOT in your context and you cannot read their',
+      'contents back (they are not lost — just out of view) unless they were summarized',
+      'into PERSISTENT MEMORY. So when asked about a past conversation you do not see, say',
+      'plainly that it is archived and not in your current context rather than guessing or',
+      'pretending to recall it. And do not confuse this with save_memory: a question like',
+      '"do you remember our last conversation?" is asking about recall, NOT a request to',
+      'save a memory — only call save_memory for a specific, durable fact worth keeping.'
+    ].join('\n')
   )
 
   _systemCache = parts.join('\n\n')
