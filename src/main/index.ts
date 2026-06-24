@@ -340,6 +340,15 @@ ipcMain.handle('app:setAutoLaunch', (_e, enabled: boolean) => {
 })
 
 app.whenReady().then(() => {
+  // GUI-launched macOS apps inherit a minimal PATH (no /usr/local/bin or
+  // /opt/homebrew/bin), so spawned tools (git, gh) wouldn't be found in a packaged
+  // build. Ensure the common bin dirs are present for all child processes.
+  if (process.platform === 'darwin') {
+    const extra = ['/opt/homebrew/bin', '/usr/local/bin']
+    const cur = (process.env.PATH || '').split(':').filter(Boolean)
+    process.env.PATH = [...new Set([...extra, ...cur])].join(':')
+  }
+
   // Microphone access for voice input (Phase 1): prompt for OS-level access on macOS,
   // and approve in-page media permission checks that getUserMedia consults.
   if (process.platform === 'darwin') {
