@@ -76,6 +76,25 @@ function getDb(): Database.Database {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      remote TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pr_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      branch TEXT,
+      agent TEXT,
+      reviewed INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
   `)
   return db
 }
@@ -83,6 +102,7 @@ function getDb(): Database.Database {
 // --- key/value meta ----------------------------------------------------------
 
 const VIEW_FLOOR = 'view_floor' // messages at/below this id are archived, not shown
+const PREV_VIEW_FLOOR = 'prev_view_floor' // the floor before the last new-conversation, for undo
 
 function getMeta(key: string): string | null {
   const row = getDb().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
@@ -103,8 +123,23 @@ function setMeta(key: string, value: string): void {
  * thread. History stays in the DB (archived), recoverable by lowering the floor.
  */
 export function startNewConversation(): void {
+  const prevFloor = getMeta(VIEW_FLOOR) ?? '0'
   const max = (getDb().prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages').get() as { m: number }).m
+  setMeta(PREV_VIEW_FLOOR, prevFloor)
   setMeta(VIEW_FLOOR, String(max))
+}
+
+/**
+ * Undo the most recent startNewConversation: delete any messages added since the
+ * floor was raised (e.g. the fresh-start greeting) and restore the previous floor,
+ * un-archiving the prior thread. The reversible alternative to a confirm dialog.
+ */
+export function undoNewConversation(): void {
+  const prev = getMeta(PREV_VIEW_FLOOR)
+  if (prev == null) return
+  const raisePoint = Number(getMeta(VIEW_FLOOR) ?? '0')
+  getDb().prepare('DELETE FROM messages WHERE id > ?').run(raisePoint)
+  setMeta(VIEW_FLOOR, prev)
 }
 
 // --- model preference --------------------------------------------------------
@@ -119,6 +154,181 @@ export function getModel(): string {
 
 export function setModel(model: string): void {
   setMeta(MODEL_KEY, model)
+}
+
+// --- model backend (which brain) ---------------------------------------------
+
+// 'anthropic' = metered Claude API (default), 'ollama' = local/home-box model,
+// 'claude-cli' = flat subscription via the claude CLI (not wired yet).
+// The backend seam lives in src/main/model/; see ROADMAP-TO-JARVIS.md Phase 8.
+const BACKEND_KEY = 'backend'
+const DEFAULT_BACKEND = 'anthropic'
+
+export function getBackend(): string {
+  return getMeta(BACKEND_KEY) ?? DEFAULT_BACKEND
+}
+
+export function setBackend(backend: string): void {
+  setMeta(BACKEND_KEY, backend)
+}
+
+// Ollama connection: host is configurable so the same code points at the laptop
+// (localhost) or a dedicated brain box on the LAN / Tailscale.
+const OLLAMA_HOST_KEY = 'ollama_host'
+const DEFAULT_OLLAMA_HOST = 'http://localhost:11434'
+const OLLAMA_MODEL_KEY = 'ollama_model'
+const DEFAULT_OLLAMA_MODEL = 'qwen2.5-coder:7b'
+
+export function getOllamaHost(): string {
+  return getMeta(OLLAMA_HOST_KEY) ?? DEFAULT_OLLAMA_HOST
+}
+
+export function setOllamaHost(host: string): void {
+  setMeta(OLLAMA_HOST_KEY, host)
+}
+
+export function getOllamaModel(): string {
+  return getMeta(OLLAMA_MODEL_KEY) ?? DEFAULT_OLLAMA_MODEL
+}
+
+export function setOllamaModel(model: string): void {
+  setMeta(OLLAMA_MODEL_KEY, model)
+}
+
+// --- multi-project registry (the ops-layer spine) ----------------------------
+
+// Generic by design: a list of overseen repos (any ecosystem, not just Livana),
+// each a working dir Artemis can switch into. The active one drives the agent's
+// file-tool cwd. See ROADMAP-TO-JARVIS.md → Phase M.
+const ACTIVE_PROJECT_KEY = 'active_project' // stores the active project's path
+
+export interface Project {
+  id: number
+  name: string
+  path: string
+  remote: string | null
+}
+
+export function listProjects(): Project[] {
+  return getDb()
+    .prepare('SELECT id, name, path, remote FROM projects ORDER BY id ASC')
+    .all() as Project[]
+}
+
+/** Add (or upsert by path) a project. First project added becomes active. */
+export function addProject(name: string, path: string, remote: string | null): Project {
+  const db = getDb()
+  db.prepare(
+    `INSERT INTO projects (name, path, remote, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(path) DO UPDATE SET name=excluded.name, remote=excluded.remote`
+  ).run(name, path, remote, Date.now())
+  if (!getMeta(ACTIVE_PROJECT_KEY)) setMeta(ACTIVE_PROJECT_KEY, path)
+  return db.prepare('SELECT id, name, path, remote FROM projects WHERE path = ?').get(path) as Project
+}
+
+export function removeProject(id: number): void {
+  const db = getDb()
+  const row = db.prepare('SELECT path FROM projects WHERE id = ?').get(id) as
+    | { path: string }
+    | undefined
+  db.prepare('DELETE FROM projects WHERE id = ?').run(id)
+  // If we removed the active project, fall back to the first remaining one.
+  if (row && getMeta(ACTIVE_PROJECT_KEY) === row.path) {
+    const next = db.prepare('SELECT path FROM projects ORDER BY id ASC LIMIT 1').get() as
+      | { path: string }
+      | undefined
+    setMeta(ACTIVE_PROJECT_KEY, next?.path ?? '')
+  }
+}
+
+/** The active project's path — defaults to Artemis's own repo if none set. */
+export function getActiveProjectPath(): string {
+  return getMeta(ACTIVE_PROJECT_KEY) || app.getAppPath()
+}
+
+export function setActiveProjectPath(path: string): void {
+  setMeta(ACTIVE_PROJECT_KEY, path)
+}
+
+export function getActiveProject(): Project | null {
+  const path = getActiveProjectPath()
+  return (
+    (getDb()
+      .prepare('SELECT id, name, path, remote FROM projects WHERE path = ?')
+      .get(path) as Project | undefined) ?? null
+  )
+}
+
+// --- PR Review Queue (worker-agent output, human-approval surface) ------------
+
+export interface PrReview {
+  id: number
+  project: string
+  title: string
+  url: string
+  branch: string | null
+  agent: string | null
+  reviewed: boolean
+  created_at: number
+}
+
+/** Log a PR a worker agent opened, for the human to review later. */
+export function addPrReview(r: {
+  project: string
+  title: string
+  url: string
+  branch?: string | null
+  agent?: string | null
+}): PrReview {
+  const db = getDb()
+  const info = db
+    .prepare(
+      'INSERT INTO pr_reviews (project, title, url, branch, agent, reviewed, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)'
+    )
+    .run(r.project, r.title, r.url, r.branch ?? null, r.agent ?? null, Date.now())
+  return db
+    .prepare('SELECT * FROM pr_reviews WHERE id = ?')
+    .get(info.lastInsertRowid) as PrReview
+}
+
+/** PRs awaiting review first (newest), then recently-reviewed for reference. */
+export function listPrReviews(): PrReview[] {
+  return (
+    getDb()
+      .prepare('SELECT * FROM pr_reviews ORDER BY reviewed ASC, created_at DESC')
+      .all() as Array<Record<string, unknown>>
+  ).map((row) => ({
+    id: row.id as number,
+    project: row.project as string,
+    title: row.title as string,
+    url: row.url as string,
+    branch: (row.branch as string) ?? null,
+    agent: (row.agent as string) ?? null,
+    reviewed: !!row.reviewed,
+    created_at: row.created_at as number
+  }))
+}
+
+export function setPrReviewed(id: number, reviewed: boolean): void {
+  getDb().prepare('UPDATE pr_reviews SET reviewed = ? WHERE id = ?').run(reviewed ? 1 : 0, id)
+}
+
+/** Drop reviewed rows (a "clear done" action for the queue). */
+export function clearReviewedPrs(): void {
+  getDb().prepare('DELETE FROM pr_reviews WHERE reviewed = 1').run()
+}
+
+/** Seed Artemis's own repo as a project on first run so the switcher is never empty. */
+export function ensureSelfProject(): void {
+  const db = getDb()
+  const selfPath = app.getAppPath()
+  const existing = db.prepare('SELECT id FROM projects WHERE path = ?').get(selfPath)
+  if (!existing) {
+    db.prepare(
+      'INSERT INTO projects (name, path, remote, created_at) VALUES (?, ?, ?, ?)'
+    ).run('artemis (self)', selfPath, null, Date.now())
+  }
+  if (!getMeta(ACTIVE_PROJECT_KEY)) setMeta(ACTIVE_PROJECT_KEY, selfPath)
 }
 
 // --- transcript ---------------------------------------------------------------

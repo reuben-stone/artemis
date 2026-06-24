@@ -19,6 +19,32 @@ while keeping the careful-operator safety posture that already exists.
 
 ---
 
+## The mission has a target — the Livana ops layer
+
+Artemis isn't a generic personal assistant; its **killer daily use case is to be the AI
+operations layer for the Livana product ecosystem** (Livana Group Ltd — Reuben + brothers
+Kofi & Daniel Stone). That target reprioritizes everything below: build what serves
+multi-repo oversight first; treat voice polish and senses as supporting cast.
+
+**The ecosystem Artemis oversees — 3 repos (all on `~/Desktop`):**
+
+| Repo | What it is | Stack | Analytics / signals | CI |
+|---|---|---|---|---|
+| `livana-web` | Marketing site (livana.io) | SvelteKit, Vercel | GA4 `G-Q2CD264F3W`, Sentry, Vercel Analytics | none |
+| `livana-scanner` | Product monorepo (npm workspaces + Turbo): **Lumi Scanner** (Next.js, lumi.livana.io), **LumiLens** (Next.js + Anthropic, lumilens.livana.io), **worker** (Express on Railway), **Chrome extension** (spike); shared `scanner-core` engine | Next.js 16, MongoDB, Stripe, NextAuth | GA4 `G-2NG7EL8BGP` (scanner) / `G-9D9ENPK0SZ` (lens), per-product Sentry | ✅ Vitest, typecheck, lint-changed, daily selfscan, lighthouse |
+| `livana-audit` | Internal WCAG 2.2 audit tool | SvelteKit, MongoDB/GridFS | none | none |
+
+*(`livana-dashboard` is **obsolete** — its devops/ticketing moved into the scanner; excluded.)*
+
+**The three capability pillars this use case needs:**
+1. **Multi-project oversight** — hold all 3 repos at once: per-repo cwd, config, memory, and status.
+2. **Live analytics intake** — pull GA4 (Google Analytics Data API) + Sentry to give health/usage overviews per app.
+3. **Worker agents** — dispatch sub-agents to fix issues across repos, **producing gated PRs, never autonomous pushes** (run each repo's own checks first — the scanner has CI; web/audit don't, so extra caution there).
+
+These map to **Multi-project foundation → sidecar brain → reach (GA + GitHub) → worker agents + proactive digests**. Voice (Phases 1–2) and senses (Phase 4) are demoted below this spine.
+
+---
+
 ## Where we are today (June 2026)
 
 | Capability | State | Lives in |
@@ -50,10 +76,12 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 
 - **One focused change at a time.** Build, confirm it works, then move on — especially for self-modification.
 - **Reversible and gated by default.** New powers ship behind the same permission posture; nothing destructive runs unasked.
-- **Presence over features.** A Jarvis that *feels* alive beats a pile of capabilities. Latency, voice quality, and responsiveness are features.
+- **Presence over features.** A Jarvis that *feels* alive beats a pile of capabilities. Latency, voice quality, and responsiveness are features. **Make it measurable:** target TTFT < 800ms, end-to-end voice round-trip (speech end → first spoken word) < 2s. Track these, don't just vibe them — a regression here is a presence regression.
 - **Memory is the moat.** The longer Artemis remembers you well, the more it becomes *yours*. Wire it deep and early.
 - **Own the stack.** Where possible, prefer code we write and understand over opaque SDK abstractions. This keeps the architecture evolvable.
 - **Batch main-process work.** Group `src/main` edits so we take the session-killing restart once, not repeatedly.
+- **Generic mechanism, projects as data.** Build the ops layer for *any* ecosystem of repos, not hardcoded to Livana — the registry holds arbitrary projects; paths, analytics IDs, CI commands, and PR rules are per-project config. Livana is the first tenant (seed data), not baked in. Don't gold-plate for hypothetical tenants (YAGNI); config-driven is enough to point at a second ecosystem later.
+- **Agents propose, the human approves.** Worker agents acting on overseen repos **only ever open PRs, never push** — and every PR they open is surfaced to the human for review (see the PR Review Queue). Autonomy produces reviewable artifacts, not silent changes.
 
 ---
 
@@ -64,7 +92,7 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 
 1. **Graceful restart (level 1) — ✅ DONE.** Transcript + terminal scrollback persist to SQLite and restore on boot. A restart is a ~1s blink that returns with everything intact. `src/main/store.ts` is the live backbone.
 
-2. **Sidecar brain (level 2 — future).** Move the agent loop into a persistent local daemon. Electron becomes a disposable face that reconnects. Only editing the daemon's own code restarts the brain. Scheduled alongside Phase 6 (proactivity), which needs the same always-on process.
+2. **Sidecar brain (level 2 — PULL EARLIER).** Move the agent loop into a persistent local daemon. Electron becomes a disposable face that reconnects. Only editing the daemon's own code restarts the brain. *Originally slated alongside Phase 6, but this is the single highest-leverage structural piece — it simultaneously unblocks safe self-modification (Phase 9), proactivity (Phase 6), and ends session-killing on every `src/main` edit. Deferring it contradicts calling it the cornerstone. Recommend building it right after voice basics, before reach/senses pile more code onto a foundation we've already decided is temporary.*
 
 ### Data & persistence — decided
 
@@ -74,7 +102,7 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 
 ---
 
-## Architecture milestone — own the agent loop 🔴  ← *active*
+## Architecture milestone — own the agent loop 🔴  ← ✅ DONE (commit `b01c148`)
 *Drop the Claude Agent SDK. Build the tool loop ourselves. Unlock prompt caching and model portability.*
 
 ### Why
@@ -112,12 +140,23 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 ### Status
 
 - ✅ Planning complete
-- ◻︎ Implement raw SDK tool loop (`agent.ts` rewrite)
-- ◻︎ Tool implementations: Read, Write, Edit, Glob, Grep, Bash, WebFetch, save_memory, recall_memory
-- ◻︎ Prompt caching on system prompt + history turns
-- ◻︎ ModelClient interface (Anthropic implementation first; Ollama stub)
-- ◻︎ Remove `@anthropic-ai/claude-agent-sdk` dependency
-- ◻︎ Verify: same tool execution behaviour, streaming, permission gating
+- ✅ Implement raw SDK tool loop (`agent.ts` rewrite, commit `b01c148`)
+- ✅ Tool implementations: Read, Write, Edit, Glob, Grep, Bash, WebFetch, save_memory, recall_memory
+- ✅ Prompt caching on system prompt + history turns (cache points in `agent.ts`)
+- ✅ ModelClient interface — extracted to `src/main/model/` (seam in `types.ts`, factory in `index.ts`). **Anthropic** (default, owns prompt caching) + **Ollama** (configurable host → laptop or brain box) backends implemented; **claude-cli** (subscription) is a documented stub (needs delegated-turn mode that bypasses the permission gate). Backend/host/model are SQLite-stored prefs (`store.ts`), settable via `agent:setBackendConfig` IPC. Loop in `agent.ts` is now backend-agnostic.
+- ✅ Remove `@anthropic-ai/claude-agent-sdk` dependency
+- ✅ Verify: same tool execution behaviour, streaming, permission gating
+
+> **⚠️ Billing consequence — do not lose track of this.** Owning the loop means we
+> now call the raw API with an `sk-ant-api…` key (`agent.ts` `getClient()` →
+> `new Anthropic({ apiKey })`). That is **metered pay-per-token billing**, a
+> *separate rail* from the flat Pro/Max subscription. The old Agent SDK rode the
+> subscription only because it spawned Claude Code (OAuth via `~/.claude`) under
+> the hood. "Own the transparent loop" and "ride the flat subscription" are
+> mutually exclusive through supported means. The flat rate is recoverable only by
+> delegating a turn to the `claude -p` CLI as a ModelClient backend (see Phase 8),
+> or by going local (zero marginal cost). Titlebar cost meter is now *real* spend,
+> not an estimate.
 
 ---
 
@@ -131,7 +170,34 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 - ✅ Tool discipline hint in system prompt (no unnecessary tool calls for conversational replies)
 - ✅ Auth/error UX — `KeySetup` component + actionable auth error messages
 
-## Phase 1 — Give Artemis ears 🔴  ← ✅ STT working / wake word pending
+## Phase M — Multi-project foundation (the spine) 🔴  ← TOP PRODUCT PRIORITY
+*Hold the whole Livana ecosystem at once. Everything ops-related builds on this.*
+
+- **Project registry (generic)** — a list of overseen repos, each with a cwd, display name,
+  and per-project config (analytics IDs, CI commands, PR rules). Stored in SQLite (`store.ts`),
+  editable. **Ecosystem-agnostic by design** — the 3 Livana repos are just the seed entries;
+  pointing Artemis at a different ecosystem is adding rows, not changing code.
+- **Project switcher** — titlebar/HUD control to set the active project; the agent loop's
+  `repoRoot()` becomes per-project instead of hardwired to Artemis's own repo.
+- **Per-project memory namespaces** — facts/episodes scoped to a repo (pairs with Phase 3),
+  plus a shared "ecosystem" scope for cross-cutting facts.
+- **Per-project status** — last-touched, current branch, dirty/clean, last analytics pull.
+- **Done when:** Artemis can switch to `livana-scanner`, answer "what's the state of this
+  repo?", and act in its cwd — without losing its own self-repo as one project among many.
+
+### Walking skeleton — the first vertical slice (do this next)
+*Prove the whole shape cheaply before building each pillar out.* One thin path that
+touches all three pillars, read-mostly and safe:
+1. **Multi-project (min):** register the 3 repos; switch active project; agent acts in that cwd.
+2. **Reach (read-only):** one GA4 overview for the active project via the Google Analytics
+   Data API (users/sessions last 7d) — no writes, no actions.
+3. **Worker (gated):** given an issue, a worker sub-agent opens a **PR** in the right repo
+   (runs that repo's checks first where they exist) — never pushes to main — and logs it to a
+   minimal **PR Review Queue** card (link + reviewed checkbox), the seed of the Phase 6 queue.
+If this slice feels right, widen each pillar (full reach in Phase 5, full workers + digests
+in Phase 6). If the shape's wrong, you learn now, not after building two whole phases.
+
+## Phase 1 — Give Artemis ears 🔴  ← DEMOTED (below the ops spine) · ✅ STT working / wake word pending
 
 - ✅ `useSpeech` hook — mic capture, 16kHz mono Float32, orb amplitude from voice
 - ✅ `listening` orb state (cyan)
@@ -155,11 +221,14 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 ## Phase 3 — Living memory 🔴
 *Remember everything that matters, recall it at the right moment.*
 
-- **Semantic tier** — embed each memory fact, recall by similarity via `sqlite-vec`. Inject only relevant facts per turn (replaces "inject everything every turn").
+- **Semantic tier** — embed each memory fact, recall by similarity via `sqlite-vec`. Inject only relevant facts per turn (replaces "inject everything every turn" — currently every fact is injected on every turn in `agent.ts`, which both dilutes attention and burns tokens).
+- **Garbage collection + conflict resolution** — dedup near-identical facts, supersede stale ones, resolve contradictions instead of accumulating forever. Memory that only grows becomes noise (and cost). This is a quality *and* a billing lever.
 - **Auto-capture** — propose durable facts at the end of meaningful turns
 - **Episodic log** — summaries of past conversations, searchable
 - **Per-project memory** scoping
-- **Done when:** Artemis recalls the right detail unprompted, weeks later
+- **Done when:** Artemis recalls the right detail unprompted weeks later — and asking
+  "what did we discuss last time?" / "what were we working on yesterday?" returns a
+  real, accurate summary of the archived thread, not "that's out of my context."
 
 ## Phase 4 — Senses 🔴
 *See what you see.*
@@ -173,6 +242,16 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 *Act beyond the repo.*
 
 - **MCP integration** — calendar, email, GitHub, Slack, notes, smart home — gated by permission flow
+- **Product data connectors (read-only)** — pull from the Livana product databases (the Lumi/LumiLens **MongoDB Atlas**: reviews, subscribers, scan/usage records) for summaries and overviews. Start **read-only** behind a per-project connection config; any write capability is a separate, explicitly-gated decision. Pairs with the GA4 analytics intake to give Reuben a real "state of the products" briefing.
+- **Trust boundary for untrusted content** — the moment Artemis can *read* email/web AND *act* (send, book, run), prompt injection becomes a real attack surface ("ignore previous instructions and …" hidden in an email/page). The current `DANGEROUS` regex blocklist won't catch this. Required: treat all fetched/received content as untrusted data (never instructions), and require explicit confirmation for any *outward-effecting* action (send/post/pay/delete), separate from the existing command gate.
+- **Connections & onboarding UI (portability)** — a single "Connections" panel so moving
+  Artemis to a new machine is point-and-click, not terminal setup. Shows live status and
+  setup for each integration: Anthropic API key (already have `KeySetup`), **GitHub** (`gh
+  auth status` → connected-as, with a guided `gh auth login`), **Google Analytics**
+  (file-pick a GA4 service-account JSON, stored encrypted via `safeStorage` like the API
+  key, + per-project property IDs), and **clone-from-GitHub** (pull a Livana repo that
+  isn't local yet). Pairs with building the GA connector — the GA credential picker needs
+  a home, so build this alongside that work.
 - **Skill library** — reusable named procedures Artemis can invoke
 - **Web actions** beyond fetch/search — structured browsing
 - **Done when:** "Artemis, book that and email them the link" works end-to-end
@@ -182,10 +261,17 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 
 - **Sidecar brain daemon** — move agent loop to a persistent local process; Electron becomes a reconnectable face (cornerstone level 2, lands here because proactivity needs it too)
 - **Scheduling / cron** — run tasks on timer or trigger ("every morning, brief me")
-- **Background agents** — long-running tasks that report back via notification
-- **Watchers** — monitor a repo, inbox, deploy; surface what changed
+- **Background / worker agents** — long-running fix-it sub-agents across repos. Each runs the
+  target repo's own checks (where they exist), then **opens a PR — never pushes**. Multiple
+  can run in tandem.
+- **PR Review Queue (UI card)** — every PR a worker agent opens is logged to a persistent card
+  (repo · title · agent · timestamp · link-out · reviewed checkbox), stored in SQLite so it
+  survives restart. Reuben comes back in the morning, clicks through each PR, and checks it off.
+  This is the human-approval surface for agent autonomy.
+- **Watchers** — monitor a repo, inbox, deploy, analytics; surface what changed
 - **System notifications** + "what I did while you were away" digest
-- **Done when:** Artemis tells *you* things, at the right time, without a prompt
+- **Done when:** Artemis tells *you* things at the right time, and overnight worker-agent PRs
+  are waiting in the review queue for you to approve over coffee.
 
 ## Phase 7 — The HUD 🟢
 *A presence, not a window.*
@@ -209,7 +295,7 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 *Artemis builds Artemis.*
 
 - **Guided self-modification** — proposes, diffs, and (with approval) applies changes to its own code, then rebuilds
-- **Eval loop** — small harness so mind changes can be measured, not just vibe-checked
+- **Eval loop** — small harness so mind changes can be measured, not just vibe-checked. **A minimal version should be pulled forward to ~Phase 2** (see Current sprint): every change today is verified by restarting and talking to it. A ~10-case smoke harness (does it still read / edit / remember / speak / gate correctly?) is cheap insurance that makes every later phase faster to trust — and is a prerequisite for safe self-modification, not a successor to it.
 - **Changelog memory** — remembers what it changed about itself and why
 - **Done when:** "Artemis, improve your own X" is a safe, routine operation
 
@@ -220,9 +306,21 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 1. ✅ ~~Graceful restart (cornerstone level 1)~~
 2. ✅ ~~Phase 0 — foundation~~
 3. ✅ ~~Phase 1 (partial) — STT working, text barge-in done~~
-4. **Architecture milestone — own the agent loop** ← *now*
-5. Phase 1 completion — wake word + VAD (after architecture settled)
-6. Phase 2 — neural TTS
+4. ✅ ~~Architecture milestone — own the agent loop~~ (commit `b01c148`)
+5. ✅ ~~`ModelClient` abstraction~~ — built in `src/main/model/`: Anthropic + Ollama backends, claude-cli stubbed. Switch via `window.artemis.agent.setBackendConfig({backend:'ollama', ollamaHost, ollamaModel})`. Renderer backend-picker UI still TODO (🟢, no restart).
+6. ✅ ~~Minimal eval harness~~ — `npm test` (vitest): 15 fast/free/deterministic smoke cases over read/edit/glob/grep/execute, speak-split, danger gate, memory recall, conversation assembly, Ollama translation. Electron + native-SQLite stubbed so it runs under plain Node. (Store view-floor/undo/turn-recovery still needs an Electron-context test — follow-up.)
+7. **Walking skeleton — the Livana ops slice** (Phase M) ← *next*: register the 3 repos +
+   project switcher; one read-only GA4 overview; one gated worker-agent PR. Proves the spine.
+8. **Multi-project foundation** (Phase M, full) — registry, switcher, per-project cwd/memory/status.
+9. **Sidecar brain (cornerstone L2)** — now load-bearing: background workers + live monitoring
+   must outlive the Electron window. Pulled up; pairs naturally with the new always-on machine.
+10. **Reach** (Phase 5) — Google Analytics Data API + GitHub connectors (gated, PR-based).
+11. **Worker agents + proactive digests** (Phase 6) — fix-it sub-agents across repos; "what
+    changed / what needs attention" overviews.
+
+*Deferred below the spine:* harden the store with Electron-context tests + wire real cost
+visibility (do alongside the skeleton); then wake word + VAD (Phase 1), neural TTS (Phase 2),
+senses (Phase 4), local models (Phase 8).
 
 ---
 

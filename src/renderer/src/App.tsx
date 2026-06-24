@@ -4,6 +4,9 @@ import TerminalPane from './components/TerminalPane'
 import Chat, { type Message } from './components/Chat'
 import PermissionDialog, { type PermissionReq } from './components/PermissionDialog'
 import KeySetup from './components/KeySetup'
+import { ProjectsPanel } from './components/ProjectsPanel'
+import { PrReviewQueue } from './components/PrReviewQueue'
+import type { Project, PrReview } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
@@ -26,7 +29,19 @@ export default function App() {
   const [permission, setPermission] = useState<PermissionReq | null>(null)
   const [cost, setCost] = useState(0) // running session cost (USD)
   const [micHint, setMicHint] = useState<string | null>(null)
+  const [showUndo, setShowUndo] = useState(false) // "new conversation · Undo" toast
   const [model, setModel] = useState('claude-sonnet-4-6')
+  // Multi-project foundation: the repos Artemis oversees + the panel toggle.
+  const [projects, setProjects] = useState<Project[]>([])
+  const [showProjects, setShowProjects] = useState(false)
+  const [projectsBusy, setProjectsBusy] = useState(false)
+  // PR Review Queue — worker-agent PRs awaiting approval.
+  const [prs, setPrs] = useState<PrReview[]>([])
+  const [showPrs, setShowPrs] = useState(false)
+  // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
+  const [backend, setBackend] = useState('anthropic')
+  const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
+  const [ollamaModel, setOllamaModel] = useState('qwen2.5-coder:7b')
 
   const amplitudeRef = useRef(0)
   const { speak, cancel, voices, selectedVoice, setVoice, previewVoice } = useVoice(
@@ -55,6 +70,8 @@ export default function App() {
   // Tokens arrive faster than we want to re-render markdown; coalesce a burst into
   // a single paint per animation frame so the transcript streams smoothly.
   const flushRaf = useRef<number | null>(null)
+  // Auto-dismiss timer for the new-conversation Undo toast.
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const flushStream = useCallback(() => {
     flushRaf.current = null
@@ -97,6 +114,84 @@ export default function App() {
       return next
     })
   }, [])
+
+  useEffect(() => {
+    window.artemis?.agent?.getBackendConfig().then((c) => {
+      if (!c) return
+      if (c.backend) setBackend(c.backend)
+      if (c.ollamaHost) setOllamaHost(c.ollamaHost)
+      if (c.ollamaModel) setOllamaModel(c.ollamaModel)
+    })
+  }, [])
+
+  // Toggle the brain between cloud (Claude API) and local (Ollama). Like the model
+  // toggle, it's read fresh each turn, so it takes effect on the next message.
+  const toggleBackend = useCallback(() => {
+    setBackend((b) => {
+      const next = b === 'ollama' ? 'anthropic' : 'ollama'
+      window.artemis?.agent?.setBackendConfig({ backend: next })
+      return next
+    })
+  }, [])
+
+  // Multi-project: load the registry on boot, and the add/remove/switch handlers.
+  useEffect(() => {
+    window.artemis?.projects?.list().then((p) => p && setProjects(p))
+  }, [])
+
+  const addProjects = useCallback(async () => {
+    setProjectsBusy(true)
+    try {
+      const updated = await window.artemis?.projects?.add()
+      if (updated) setProjects(updated)
+    } finally {
+      setProjectsBusy(false)
+    }
+  }, [])
+
+  const removeProject = useCallback(async (id: number) => {
+    const updated = await window.artemis?.projects?.remove(id)
+    if (updated) setProjects(updated)
+  }, [])
+
+  const selectProject = useCallback(async (path: string) => {
+    const updated = await window.artemis?.projects?.setActive(path)
+    if (updated) setProjects(updated)
+    setShowProjects(false)
+  }, [])
+
+  const activeProject = projects.find((p) => p.active)
+
+  // PR Review Queue: load on boot, and the toggle/clear handlers.
+  useEffect(() => {
+    window.artemis?.prReviews?.list().then((p) => p && setPrs(p))
+  }, [])
+
+  const togglePr = useCallback(async (id: number, reviewed: boolean) => {
+    const updated = await window.artemis?.prReviews?.setReviewed(id, reviewed)
+    if (updated) setPrs(updated)
+  }, [])
+
+  const clearReviewedPrs = useCallback(async () => {
+    const updated = await window.artemis?.prReviews?.clearReviewed()
+    if (updated) setPrs(updated)
+  }, [])
+
+  // Refetch on open — worker agents add PRs in the main process during a turn, so the
+  // renderer's cached list goes stale until we re-pull it.
+  const openPrs = useCallback(async () => {
+    const updated = await window.artemis?.prReviews?.list()
+    if (updated) setPrs(updated)
+    setShowPrs(true)
+  }, [])
+
+  const openProjects = useCallback(async () => {
+    const updated = await window.artemis?.projects?.list()
+    if (updated) setProjects(updated)
+    setShowProjects(true)
+  }, [])
+
+  const pendingPrs = prs.filter((p) => !p.reviewed).length
 
   // Restore the transcript from the SQLite backbone; only greet on a genuinely fresh
   // start. Then reattach to any turn that was in flight when we (re)loaded.
@@ -267,37 +362,20 @@ export default function App() {
     async (text: string) => {
       setBusy(true)
 
-      // "remember …" → persist a durable fact via the markdown memory store.
-      const mem = text.match(/^\s*remember(?:\s+that)?\s+(.+)/i)
-      if (mem && window.artemis?.memory) {
-        const fact = mem[1].trim()
-        setMessages((m) => [...m, { role: 'user', text }])
-        window.artemis?.history?.append('user', text)
-        await window.artemis.memory.save({
-          name: fact.split(/\s+/).slice(0, 6).join('-'),
-          description: fact.slice(0, 80),
-          type: 'user',
-          body: fact
-        })
-        const ack = `Saved to memory — I'll remember that across sessions.`
-        setMessages((m) => [...m, { role: 'assistant', text: ack }])
-        window.artemis?.history?.append('assistant', ack)
-        setState('idle')
-        if (voiceOn) speak(ack)
-        setBusy(false)
-        return
-      }
-
-      // hand the turn to the real operator. Commit the user message now; the operator
-      // commits its assistant reply from main when the turn completes.
+      // Memory intent is the model's job, not a UI keyword match: it has save_memory
+      // / recall_memory tools and an accurate self-model, so it can tell "remember
+      // that I prefer X" (save) from "remember any of our last convo?" (a recall
+      // question) — a regex on "remember" cannot, and was false-saving questions.
+      // hand the turn to the real operator. Show the user message optimistically; main
+      // persists BOTH the user message (once) and its assistant reply when the turn
+      // runs — committing it here too would double-send it into the model's context.
       setMessages((m) => [...m, { role: 'user', text }, { role: 'assistant', text: '' }])
-      window.artemis?.history?.append('user', text)
       acc.current = ''
       const requestId = `r${reqCounter.current++}`
       activeReq.current = requestId
       await window.artemis?.agent?.run(requestId, text)
     },
-    [voiceOn, speak]
+    []
   )
   // Keep the ref current on every render so the onEvent drain always calls the
   // latest closure (which captures the current voiceOn / speak values).
@@ -358,8 +436,17 @@ export default function App() {
   }
 
   // New conversation: fresh SDK context + archived transcript view. History is kept
-  // in the DB (the main process just raises the view floor), so nothing is lost.
+  // in the DB (the main process just raises the view floor), so nothing is lost —
+  // which is why we offer an Undo toast instead of a blocking confirm dialog.
   const newConversation = useCallback(async () => {
+    // In-flight guard: the one genuinely surprising case — starting fresh mid-turn
+    // would orphan the running answer. Confirm before discarding it.
+    if (busy && !window.confirm('Artemis is still responding — start a new conversation anyway?')) {
+      return
+    }
+    // Only offer Undo if there was a real thread to archive (a user message).
+    const hadThread = messages.some((m) => m.role === 'user')
+
     await window.artemis?.agent?.newConversation()
     cancel()
     cancelFlush()
@@ -368,17 +455,29 @@ export default function App() {
     setBusy(false)
     setState('idle')
     setCost(0)
-    const { facts } = (await window.artemis?.memory?.load()) ?? { facts: [] }
-    const greeting =
-      facts.length > 0
-        ? `Fresh start — I still remember ${facts.length} thing${
-            facts.length === 1 ? '' : 's'
-          } about you and our work. What next?`
-        : `Fresh start. What should we do?`
+    const greeting = `What can I help with?`
     setMessages([{ role: 'assistant', text: greeting }])
     window.artemis?.history?.append('assistant', greeting)
     if (voiceOnRef.current) setTimeout(() => speak(greeting), 200)
-  }, [cancel, cancelFlush, speak])
+
+    if (hadThread) {
+      setShowUndo(true)
+      if (undoTimer.current) clearTimeout(undoTimer.current)
+      undoTimer.current = setTimeout(() => setShowUndo(false), 6000)
+    }
+  }, [busy, messages, cancel, cancelFlush, speak])
+
+  // Undo a new-conversation within the toast window: drop the fresh-start greeting
+  // and restore the archived thread.
+  const undoNewConversation = useCallback(async () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current)
+    setShowUndo(false)
+    cancel()
+    await window.artemis?.agent?.undoNewConversation()
+    const restored = (await window.artemis?.history?.load()) ?? []
+    setMessages(restored as Message[])
+    setState('idle')
+  }, [cancel])
 
   if (needsKey) {
     return <KeySetup onDone={() => setNeedsKey(false)} />
@@ -390,6 +489,20 @@ export default function App() {
         <span className="brand">◈ ARTEMIS</span>
         <div className="titlebar-right">
           <button
+            className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
+            onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
+            title="Switch / manage projects"
+          >
+            ▣ {activeProject?.name ?? 'project'}
+          </button>
+          <button
+            className={`pr-queue-btn ${pendingPrs > 0 ? 'on' : ''}`}
+            onClick={() => (showPrs ? setShowPrs(false) : openPrs())}
+            title="PR review queue"
+          >
+            ⎇ PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
+          </button>
+          <button
             className="new-convo"
             onClick={newConversation}
             title="New conversation (keeps history)"
@@ -397,16 +510,50 @@ export default function App() {
             ＋ new
           </button>
           <button
-            className={`model-toggle ${model === 'claude-opus-4-8' ? 'opus' : ''}`}
-            onClick={toggleModel}
+            className={`backend-toggle ${backend === 'ollama' ? 'local' : ''}`}
+            onClick={toggleBackend}
             title={
-              model === 'claude-opus-4-8'
-                ? 'Opus 4.8 — max capability (slower, pricier). Click for Sonnet.'
-                : 'Sonnet 4.6 — fast & efficient. Click for Opus.'
+              backend === 'ollama'
+                ? 'Local model (Ollama). Click for Cloud (Claude API).'
+                : 'Cloud — Claude API (metered). Click for Local (Ollama).'
             }
           >
-            {model === 'claude-opus-4-8' ? 'Opus' : 'Sonnet'}
+            {backend === 'ollama' ? '⌂ Local' : '☁ Cloud'}
           </button>
+          {backend === 'ollama' ? (
+            <>
+              <input
+                className="ollama-field"
+                value={ollamaHost}
+                onChange={(e) => setOllamaHost(e.target.value)}
+                onBlur={() => window.artemis?.agent?.setBackendConfig({ ollamaHost })}
+                title="Ollama host — localhost, or a brain box e.g. http://192.168.1.20:11434"
+                placeholder="http://localhost:11434"
+                spellCheck={false}
+              />
+              <input
+                className="ollama-field model"
+                value={ollamaModel}
+                onChange={(e) => setOllamaModel(e.target.value)}
+                onBlur={() => window.artemis?.agent?.setBackendConfig({ ollamaModel })}
+                title="Ollama model, e.g. qwen2.5-coder:7b"
+                placeholder="qwen2.5-coder:7b"
+                spellCheck={false}
+              />
+            </>
+          ) : (
+            <button
+              className={`model-toggle ${model === 'claude-opus-4-8' ? 'opus' : ''}`}
+              onClick={toggleModel}
+              title={
+                model === 'claude-opus-4-8'
+                  ? 'Opus 4.8 — max capability (slower, pricier). Click for Sonnet.'
+                  : 'Sonnet 4.6 — fast & efficient. Click for Opus.'
+              }
+            >
+              {model === 'claude-opus-4-8' ? 'Opus' : 'Sonnet'}
+            </button>
+          )}
           <button
             className={`term-toggle ${showTerminal ? 'on' : ''}`}
             onClick={() => setShowTerminal((v) => !v)}
@@ -489,6 +636,33 @@ export default function App() {
 
       {permission && (
         <PermissionDialog req={permission} onRespond={respondPermission} />
+      )}
+
+      {showUndo && (
+        <div className="undo-toast" role="status">
+          <span>Started a new conversation</span>
+          <button onClick={undoNewConversation}>Undo</button>
+        </div>
+      )}
+
+      {showProjects && (
+        <ProjectsPanel
+          projects={projects}
+          busy={projectsBusy}
+          onAdd={addProjects}
+          onRemove={removeProject}
+          onSelect={selectProject}
+          onClose={() => setShowProjects(false)}
+        />
+      )}
+
+      {showPrs && (
+        <PrReviewQueue
+          prs={prs}
+          onToggle={togglePr}
+          onClearReviewed={clearReviewedPrs}
+          onClose={() => setShowPrs(false)}
+        />
       )}
     </div>
   )

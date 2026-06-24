@@ -9,15 +9,16 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
+    "test": "vitest run",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
     "@huggingface/transformers": "^4.2.0",
-    "glob": "^11.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "better-sqlite3": "^12.11.1",
+    "glob": "^11.1.0",
     "node-pty": "^1.0.0",
     "react-markdown": "^10.1.0",
     "remark-breaks": "^4.0.0",
@@ -39,6 +40,7 @@
     "react-dom": "^18.3.1",
     "three": "^0.169.0",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
   }
 }
