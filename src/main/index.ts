@@ -89,6 +89,14 @@ try {
 const shellPath =
   process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
 
+// Keep the orb's rAF loop alive in every backgrounded/occluded state. The per-window
+// `backgroundThrottling: false` covers unfocus but NOT macOS occlusion (window covered
+// by another) — Chromium still pauses rAF then, freezing the orb until you click in.
+// These app-level switches (set before `ready`) disable that occlusion/timer throttling.
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
