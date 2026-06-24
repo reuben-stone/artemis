@@ -176,6 +176,16 @@ const api = {
         speech?: string
         error?: string
         cost?: number
+        // A tool-call lifecycle event for the chat activity timeline. `phase:'start'`
+        // carries name+input; `phase:'end'` carries status+output (preview-clamped).
+        tool?: {
+          id: string
+          phase: 'start' | 'end'
+          name?: string
+          input?: unknown
+          status?: 'ok' | 'error' | 'denied'
+          output?: string
+        }
       }) => void
     ) => {
       const handler = (_e: unknown, payload: any) => cb(payload)

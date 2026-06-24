@@ -8,7 +8,8 @@ import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
 import { SettingsModal } from './components/SettingsModal'
 import { BriefingCard } from './components/BriefingCard'
-import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise } from 'lucide-react'
+import { CommandPalette, type Command } from './components/CommandPalette'
+import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign } from 'lucide-react'
 import type { Project, PrReview, GaProp, BriefingData } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
@@ -31,6 +32,10 @@ export default function App() {
   const [needsKey, setNeedsKey] = useState(false)
   const [permission, setPermission] = useState<PermissionReq | null>(null)
   const [cost, setCost] = useState(0) // running session cost (USD)
+  // Whether to surface the running cost estimate in the top bar. Off by default —
+  // it's a niche metric (and goes to $0 once the local model is the brain). Persisted
+  // as a pure UI preference in localStorage. Cost is always tracked; this only hides it.
+  const [showCost, setShowCost] = useState(() => localStorage.getItem('artemis.showCost') === '1')
   const [micHint, setMicHint] = useState<string | null>(null)
   const [showUndo, setShowUndo] = useState(false) // "new conversation · Undo" toast
   const [model, setModel] = useState('claude-sonnet-4-6')
@@ -42,6 +47,7 @@ export default function App() {
   const [prs, setPrs] = useState<PrReview[]>([])
   const [showPrs, setShowPrs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showCmdk, setShowCmdk] = useState(false) // ⌘K command palette
   // On-command briefing, shown in a docked card in the orb area.
   const [showBriefing, setShowBriefing] = useState(false)
   const [briefingData, setBriefingData] = useState<BriefingData | null>(null)
@@ -86,7 +92,8 @@ export default function App() {
     const display = splitSpeech(acc.current).display
     setMessages((m) => {
       const next = [...m]
-      next[next.length - 1] = { role: 'assistant', text: display }
+      // Spread the prior bubble so the tool-activity timeline isn't wiped on each flush.
+      next[next.length - 1] = { ...next[next.length - 1], role: 'assistant', text: display }
       return next
     })
   }, [])
@@ -223,6 +230,26 @@ export default function App() {
 
   const toggleTerminal = useCallback(() => setShowTerminal((v) => !v), [])
 
+  const toggleShowCost = useCallback(() => {
+    setShowCost((v) => {
+      const next = !v
+      localStorage.setItem('artemis.showCost', next ? '1' : '0')
+      return next
+    })
+  }, [])
+
+  // ⌘K / Ctrl+K toggles the command palette from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        setShowCmdk((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const pendingPrs = prs.filter((p) => !p.reviewed).length
 
   // Restore the transcript from the SQLite backbone; only greet on a genuinely fresh
@@ -329,6 +356,24 @@ export default function App() {
         if (flushRaf.current == null) flushRaf.current = requestAnimationFrame(flushStream)
       }
       if (typeof e.cost === 'number') setCost((c) => c + e.cost!)
+      if (e.tool) {
+        const t = e.tool
+        setMessages((m) => {
+          const i = m.length - 1
+          if (i < 0 || m[i].role !== 'assistant') return m
+          const next = [...m]
+          const msg = next[i]
+          const tools = msg.tools ? [...msg.tools] : []
+          if (t.phase === 'start') {
+            tools.push({ id: t.id, name: t.name ?? 'tool', input: t.input, status: 'running' })
+          } else {
+            const j = tools.findIndex((s) => s.id === t.id)
+            if (j >= 0) tools[j] = { ...tools[j], status: t.status ?? 'ok', output: t.output }
+          }
+          next[i] = { ...msg, tools }
+          return next
+        })
+      }
       if (e.done !== undefined) {
         cancelFlush()
         // `e.done` is already marker-stripped by main; acc may still hold the raw
@@ -337,7 +382,8 @@ export default function App() {
         const spoken = e.speech || splitSpeech(acc.current).speech || speechFallback(display)
         setMessages((m) => {
           const next = [...m]
-          next[next.length - 1] = { role: 'assistant', text: display }
+          // Keep the completed turn's tool timeline alongside its final text.
+          next[next.length - 1] = { ...next[next.length - 1], role: 'assistant', text: display }
           return next
         })
         if (voiceOnRef.current && spoken) speak(spoken)
@@ -527,6 +573,28 @@ export default function App() {
     setState('idle')
   }, [cancel])
 
+  // Command palette entries — every toolbar action plus quick project switching.
+  const commands: Command[] = [
+    { id: 'new', label: 'New chat', icon: <MessageSquarePlus size={15} />, run: () => void newConversation() },
+    { id: 'briefing', label: 'Run ecosystem briefing', icon: <Sunrise size={15} />, run: openBriefing },
+    { id: 'prs', label: 'PR review queue', icon: <GitPullRequest size={15} />, run: () => void openPrs() },
+    { id: 'projects', label: 'Switch / manage projects', icon: <FolderGit2 size={15} />, run: () => void openProjects() },
+    { id: 'settings', label: 'Open settings', icon: <Settings size={15} />, run: () => void openSettings() },
+    { id: 'model', label: `Switch model to ${model === 'claude-opus-4-8' ? 'Sonnet' : 'Opus'}`, icon: <Cpu size={15} />, run: toggleModel },
+    { id: 'voice', label: `${voiceOn ? 'Disable' : 'Enable'} voice`, icon: <Volume2 size={15} />, run: toggleVoice },
+    { id: 'terminal', label: `${showTerminal ? 'Hide' : 'Show'} terminal pane`, icon: <Terminal size={15} />, run: toggleTerminal },
+    { id: 'cost', label: `${showCost ? 'Hide' : 'Show'} cost in top bar`, icon: <DollarSign size={15} />, run: toggleShowCost },
+    ...projects
+      .filter((p) => !p.active)
+      .map((p) => ({
+        id: `proj-${p.id}`,
+        label: `Switch to ${p.name}`,
+        hint: 'project',
+        icon: <FolderGit2 size={15} />,
+        run: () => void selectProject(p.path)
+      }))
+  ]
+
   if (needsKey) {
     return <KeySetup onDone={() => setNeedsKey(false)} />
   }
@@ -586,8 +654,8 @@ export default function App() {
           </button>
 
           {/* Status */}
-          {cost > 0 && (
-            <span className="cost" title="Estimated cost this conversation">
+          {showCost && cost > 0 && (
+            <span className="cost" title="Estimated cost this conversation (list prices)">
               ${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}
             </span>
           )}
@@ -677,6 +745,8 @@ export default function App() {
         />
       )}
 
+      {showCmdk && <CommandPalette commands={commands} onClose={() => setShowCmdk(false)} />}
+
       {showSettings && (
         <SettingsModal
           model={model}
@@ -694,6 +764,8 @@ export default function App() {
           onToggleAutoLaunch={toggleAutoLaunch}
           showTerminal={showTerminal}
           onToggleTerminal={toggleTerminal}
+          showCost={showCost}
+          onToggleShowCost={toggleShowCost}
           projects={projects}
           onSetGaProps={setGaProps}
           onClose={() => setShowSettings(false)}
