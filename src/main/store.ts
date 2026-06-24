@@ -250,6 +250,15 @@ export function setActiveProjectPath(path: string): void {
   setMeta(ACTIVE_PROJECT_KEY, path)
 }
 
+// Per-project GA4 property id (meta-keyed by path — no schema migration needed).
+export function getProjectGaProperty(path: string): string | null {
+  return getMeta(`ga_property:${path}`)
+}
+
+export function setProjectGaProperty(path: string, propertyId: string): void {
+  setMeta(`ga_property:${path}`, propertyId.trim())
+}
+
 export function getActiveProject(): Project | null {
   const path = getActiveProjectPath()
   return (

@@ -19,8 +19,10 @@ import {
   getActiveProjectPath,
   getActiveProject,
   listProjects,
+  getProjectGaProperty,
   type StoredTurn
 } from './store'
+import { gaSummary, hasGaCredentials } from './ga'
 
 const execAsync = promisify(exec)
 
@@ -651,6 +653,15 @@ async function toolEcosystemStatus(): Promise<string> {
         const files = changed.map((l) => l.slice(3))
         const shown = files.slice(0, 6).join(', ')
         lines.push(`    changed: ${shown}${files.length > 6 ? ` (+${files.length - 6} more)` : ''}`)
+      }
+      // Live analytics for projects with a GA4 property configured (read-only).
+      const gaProp = getProjectGaProperty(p.path)
+      if (gaProp && hasGaCredentials()) {
+        try {
+          lines.push(`    ${await gaSummary(gaProp)}`)
+        } catch (err) {
+          lines.push(`    GA: unavailable (${err instanceof Error ? err.message.slice(0, 80) : 'error'})`)
+        }
       }
       lines.push(`    ${p.path}`)
       return lines.join('\n')

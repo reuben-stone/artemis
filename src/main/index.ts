@@ -1,13 +1,14 @@
 import { app, shell, BrowserWindow, ipcMain, session, systemPreferences, dialog } from 'electron'
 import { join, basename } from 'path'
 import os from 'os'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
 import { runAgent, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 import { parseGitRemote } from './github'
+import { hasGaCredentials, setGaCredentials, clearGaCredentials } from './ga'
 import {
   appendMessage,
   loadRecentMessages,
@@ -27,6 +28,8 @@ import {
   getActiveProjectPath,
   setActiveProjectPath,
   ensureSelfProject,
+  getProjectGaProperty,
+  setProjectGaProperty,
   listPrReviews,
   setPrReviewed,
   clearReviewedPrs
@@ -61,7 +64,14 @@ async function projectsWithStatus(): Promise<unknown[]> {
   return Promise.all(
     listProjects().map(async (p) => {
       const { branch, dirty } = await gitInfo(p.path)
-      return { ...p, branch, dirty, active: p.path === active, gh: parseGitRemote(p.remote) }
+      return {
+        ...p,
+        branch,
+        dirty,
+        active: p.path === active,
+        gh: parseGitRemote(p.remote),
+        gaProperty: getProjectGaProperty(p.path)
+      }
     })
   )
 }
@@ -259,6 +269,48 @@ ipcMain.handle('projects:setActive', (_e, path: string) => {
   setActiveProjectPath(path)
   invalidateSystemCache() // the active project is baked into the system prompt
   return projectsWithStatus()
+})
+
+ipcMain.handle('projects:setGaProperty', (_e, { path, propertyId }: { path: string; propertyId: string }) => {
+  setProjectGaProperty(path, propertyId)
+  return projectsWithStatus()
+})
+
+// --- Connections / onboarding IPC ---
+ipcMain.handle('connections:status', async () => {
+  let githubUser: string | null = null
+  try {
+    githubUser = (await execp('gh api user --jq .login')).stdout.trim() || null
+  } catch {
+    githubUser = null
+  }
+  return {
+    anthropic: await hasApiKey(),
+    github: { connected: !!githubUser, user: githubUser },
+    ga: { configured: hasGaCredentials() }
+  }
+})
+
+// Pick a GA4 service-account JSON file and store it encrypted.
+ipcMain.handle('connections:setGaCredentials', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const res = await dialog.showOpenDialog(win!, {
+    title: 'Select your GA4 service-account JSON key',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  })
+  if (res.canceled || !res.filePaths[0]) return { ok: false, configured: hasGaCredentials() }
+  try {
+    await setGaCredentials(readFileSync(res.filePaths[0], 'utf8'))
+    return { ok: true, configured: true }
+  } catch (err: unknown) {
+    return { ok: false, configured: hasGaCredentials(), error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('connections:clearGaCredentials', async () => {
+  await clearGaCredentials()
+  return { configured: false }
 })
 
 // --- PR Review Queue IPC (worker-agent output, human approval) ---

@@ -6,6 +6,7 @@ import PermissionDialog, { type PermissionReq } from './components/PermissionDia
 import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
+import { ConnectionsPanel } from './components/ConnectionsPanel'
 import type { Project, PrReview } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
@@ -38,6 +39,7 @@ export default function App() {
   // PR Review Queue — worker-agent PRs awaiting approval.
   const [prs, setPrs] = useState<PrReview[]>([])
   const [showPrs, setShowPrs] = useState(false)
+  const [showConnections, setShowConnections] = useState(false)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -189,6 +191,17 @@ export default function App() {
     const updated = await window.artemis?.projects?.list()
     if (updated) setProjects(updated)
     setShowProjects(true)
+  }, [])
+
+  const openConnections = useCallback(async () => {
+    const updated = await window.artemis?.projects?.list()
+    if (updated) setProjects(updated)
+    setShowConnections(true)
+  }, [])
+
+  const setGaProperty = useCallback(async (path: string, propertyId: string) => {
+    const updated = await window.artemis?.projects?.setGaProperty(path, propertyId)
+    if (updated) setProjects(updated)
   }, [])
 
   const pendingPrs = prs.filter((p) => !p.reviewed).length
@@ -503,6 +516,13 @@ export default function App() {
             ⎇ PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
           </button>
           <button
+            className="conn-btn"
+            onClick={() => (showConnections ? setShowConnections(false) : openConnections())}
+            title="Connections / setup"
+          >
+            ⚙
+          </button>
+          <button
             className="new-convo"
             onClick={newConversation}
             title="New conversation (keeps history)"
@@ -662,6 +682,14 @@ export default function App() {
           onToggle={togglePr}
           onClearReviewed={clearReviewedPrs}
           onClose={() => setShowPrs(false)}
+        />
+      )}
+
+      {showConnections && (
+        <ConnectionsPanel
+          projects={projects}
+          onSetGaProperty={setGaProperty}
+          onClose={() => setShowConnections(false)}
         />
       )}
     </div>
