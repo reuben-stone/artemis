@@ -127,14 +127,20 @@ function OrbMesh({
   useFrame((_, delta) => {
     const cfg = STATE_CONFIG[state]
     const u = uniforms
-    u.uTime.value += delta
+    // Cap delta so a stalled frame (heavy tool call, IPC spike) doesn't
+    // fast-forward uTime and leave the orb crawling slowly through a huge
+    // time value when it returns to idle.
+    const dt = Math.min(delta, 0.05)
+    // Keep uTime in a small repeating window so simplex noise never drifts
+    // into a flat region at large t values.
+    u.uTime.value = (u.uTime.value + dt) % 1000
     // smooth the live amplitude so the pulse feels organic, not jittery
-    ampRef.current += (amplitudeRef.current - ampRef.current) * Math.min(1, delta * 12)
+    ampRef.current += (amplitudeRef.current - ampRef.current) * Math.min(1, dt * 12)
     u.uAmp.value = ampRef.current
     // ease state-driven params
-    u.uBreathe.value += (cfg.breathe - u.uBreathe.value) * Math.min(1, delta * 3)
-    u.uSpeed.value += (cfg.speed - u.uSpeed.value) * Math.min(1, delta * 3)
-    colorRef.current.lerp(cfg.color, Math.min(1, delta * 3))
+    u.uBreathe.value += (cfg.breathe - u.uBreathe.value) * Math.min(1, dt * 3)
+    u.uSpeed.value += (cfg.speed - u.uSpeed.value) * Math.min(1, dt * 3)
+    colorRef.current.lerp(cfg.color, Math.min(1, dt * 3))
     ;(u.uColor.value as THREE.Color).copy(colorRef.current)
   })
 
