@@ -148,7 +148,7 @@ function normalizeArgs(args: unknown): Record<string, unknown> {
  * message keyed by tool *name*, so we track id→name as we walk the assistant
  * tool_use blocks and re-pair them when we hit the matching results.
  */
-function toOllamaMessages(
+export function toOllamaMessages(
   messages: Anthropic.MessageParam[]
 ): Array<{ role: string; content: string; tool_calls?: unknown[]; tool_name?: string }> {
   const out: Array<{

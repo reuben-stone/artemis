@@ -235,7 +235,7 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 3. ✅ ~~Phase 1 (partial) — STT working, text barge-in done~~
 4. ✅ ~~Architecture milestone — own the agent loop~~ (commit `b01c148`)
 5. ✅ ~~`ModelClient` abstraction~~ — built in `src/main/model/`: Anthropic + Ollama backends, claude-cli stubbed. Switch via `window.artemis.agent.setBackendConfig({backend:'ollama', ollamaHost, ollamaModel})`. Renderer backend-picker UI still TODO (🟢, no restart).
-6. **Minimal eval harness** — ~10 smoke cases before more self-modification (pulled forward from Phase 9).
+6. ✅ ~~Minimal eval harness~~ — `npm test` (vitest): 15 fast/free/deterministic smoke cases over read/edit/glob/grep/execute, speak-split, danger gate, memory recall, conversation assembly, Ollama translation. Electron + native-SQLite stubbed so it runs under plain Node. (Store view-floor/undo/turn-recovery still needs an Electron-context test — follow-up.)
 7. **Sidecar brain (cornerstone L2)** — pulled earlier; ends session-killing and unblocks proactivity + safe self-mod.
 8. Phase 1 completion — wake word + VAD
 9. Phase 2 — neural TTS
