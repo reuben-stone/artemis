@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { X, CircleCheck, Circle, Plus, Loader2 } from 'lucide-react'
+import { X, CircleCheck, Circle, Plus, Loader2, Cloud, HardDrive } from 'lucide-react'
 import type { Project, ConnectionsStatus, GaProp } from '../../../preload'
 import { ACCENTS, applyAccent, currentAccentId } from '../theme'
 
@@ -112,10 +112,10 @@ function ModelTab(p: {
         <span className="set-label">Brain</span>
         <div className="seg">
           <button className={p.backend !== 'ollama' ? 'on' : ''} onClick={() => p.backend === 'ollama' && p.onToggleBackend()}>
-            ☁ Cloud
+            <Cloud size={13} /> Cloud
           </button>
           <button className={p.backend === 'ollama' ? 'on' : ''} onClick={() => p.backend !== 'ollama' && p.onToggleBackend()}>
-            ⌂ Local
+            <HardDrive size={13} /> Local
           </button>
         </div>
       </div>
