@@ -20,6 +20,7 @@ import {
   getActiveProject,
   listProjects,
   getProjectGaProps,
+  setBriefingLatest,
   type StoredTurn
 } from './store'
 import { gaSummary, hasGaCredentials } from './ga'
@@ -809,6 +810,66 @@ export async function undoSession(): Promise<void> {
 
 export interface PermissionAsker {
   (req: { toolName: string; input: unknown }): Promise<boolean>
+}
+
+// ─── Proactive briefing (read-only, rendered in the docked card) ─────────────
+
+const BRIEFING_PROMPT =
+  'Produce my briefing: a concise cross-repo ecosystem status with the latest analytics for each project (use ecosystem_status), and call out anything that needs my attention. Markdown, scannable. No ⟦say⟧ line needed.'
+
+/**
+ * Run a self-contained, READ-ONLY briefing turn and return the markdown. It does not
+ * touch the chat transcript — the result is stored and shown in the briefing card.
+ * Only auto-allowed (read-only) tools are permitted; any write/exec is refused.
+ */
+export async function runBriefing(): Promise<{ text: string; at: number }> {
+  const client = await getModelClient()
+  const system = await buildSystemPrompt()
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: BRIEFING_PROMPT }]
+
+  let acc = ''
+  for (let round = 0; round < 12; round++) {
+    const stream = client.stream({ system, messages, tools: TOOLS })
+    let text = ''
+    for await (const tok of stream.tokens) {
+      text += tok
+      acc += tok
+    }
+    const final = await stream.final()
+    messages.push({ role: 'assistant', content: final.content })
+    if (final.stopReason !== 'tool_use') break
+
+    const results: Anthropic.ToolResultBlockParam[] = []
+    for (const block of final.content) {
+      if (block.type !== 'tool_use') continue
+      if (!AUTO_ALLOW.has(block.name)) {
+        results.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: 'Refused: the briefing is read-only.',
+          is_error: true
+        })
+        continue
+      }
+      try {
+        const out = await executeTool(block.name, block.input as Record<string, unknown>)
+        results.push({ type: 'tool_result', tool_use_id: block.id, content: clampToolOutput(out) })
+      } catch (err: unknown) {
+        results.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          is_error: true
+        })
+      }
+    }
+    messages.push({ role: 'user', content: results })
+  }
+
+  const text = splitSpeech(acc.trim()).display || acc.trim()
+  const at = Date.now()
+  setBriefingLatest(text, at)
+  return { text, at }
 }
 
 // ─── Main agent loop ───────────────────────────────────────────────────────

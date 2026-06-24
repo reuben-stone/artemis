@@ -103,6 +103,11 @@ const api = {
     clearGaCredentials: (): Promise<{ configured: boolean }> =>
       ipcRenderer.invoke('connections:clearGaCredentials')
   },
+  // On-command briefing — generate (read-only) and recall the latest for the card.
+  briefing: {
+    run: (): Promise<{ text: string; at: number }> => ipcRenderer.invoke('briefing:run'),
+    latest: (): Promise<{ text: string; at: number } | null> => ipcRenderer.invoke('briefing:latest')
+  },
   // PR Review Queue — worker-agent PRs awaiting the human's approval.
   prReviews: {
     list: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:list'),
