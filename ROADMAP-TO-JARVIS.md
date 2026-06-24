@@ -111,14 +111,14 @@ brain (level 2) remains future work, slated alongside Phase 6.
   machine logs in and pulls. The SQLite file stays **out of git** (binary diffs/merge noise);
   the human-readable `memory/` facts stay git-tracked.
 
-## Phase 0 — Foundation hardening 🔴  ← *active*
+## Phase 0 — Foundation hardening 🔴  ← *wrapping up*
 *Make the existing mind unshakeable before we pile on.*
 
-- ⏳ Wire **`src/main/memory.ts` into the agent loop** — `buildSystemAppend` should load the memory index + facts, not just `ARTEMIS.md`. (Currently the store is written but never read back into context.) **← in progress**
-- Give Artemis **first-class memory tools** (`save_memory` / `recall_memory`) so it curates its own memory deliberately, mid-conversation.
-- Harden session resume: surface session/cost in the UI, add a "new conversation" control.
-- Error & auth UX: clearer states when the key/login is missing.
-- **Done when:** Artemis reliably remembers facts across restarts *and* uses them in answers, with visible session state.
+- ✅ Wire **`src/main/memory.ts` into the agent loop** — `buildSystemAppend` now loads the memory index + facts into context, not just `ARTEMIS.md`.
+- ✅ **First-class memory tools** (`mcp__memory__save_memory` / `recall_memory`) via an in-process SDK MCP server, so the operator curates its own memory mid-conversation (runs without a permission prompt).
+- ✅ **Session/cost in the UI + "new conversation" control** — running cost shows in the titlebar; "＋ new" drops the SDK session and archives the thread via a DB *view floor* (history kept, not deleted).
+- ◻︎ Error & auth UX: clearer states when the key/login is missing — already in reasonable shape (KeySetup + actionable auth error); revisit if it bites.
+- **Done when:** Artemis reliably remembers facts across restarts *and* uses them in answers, with visible session state. → **essentially met; pending the restart that loads the memory tools + a quick live check.**
 
 ## Phase 1 — Give Artemis ears 🔴
 *The single biggest leap toward Jarvis: talking instead of typing.*
