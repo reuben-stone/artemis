@@ -171,7 +171,9 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 - **Auto-capture** — propose durable facts at the end of meaningful turns
 - **Episodic log** — summaries of past conversations, searchable
 - **Per-project memory** scoping
-- **Done when:** Artemis recalls the right detail unprompted, weeks later
+- **Done when:** Artemis recalls the right detail unprompted weeks later — and asking
+  "what did we discuss last time?" / "what were we working on yesterday?" returns a
+  real, accurate summary of the archived thread, not "that's out of my context."
 
 ## Phase 4 — Senses 🔴
 *See what you see.*
