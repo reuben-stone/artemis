@@ -80,6 +80,8 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 - **Memory is the moat.** The longer Artemis remembers you well, the more it becomes *yours*. Wire it deep and early.
 - **Own the stack.** Where possible, prefer code we write and understand over opaque SDK abstractions. This keeps the architecture evolvable.
 - **Batch main-process work.** Group `src/main` edits so we take the session-killing restart once, not repeatedly.
+- **Generic mechanism, projects as data.** Build the ops layer for *any* ecosystem of repos, not hardcoded to Livana — the registry holds arbitrary projects; paths, analytics IDs, CI commands, and PR rules are per-project config. Livana is the first tenant (seed data), not baked in. Don't gold-plate for hypothetical tenants (YAGNI); config-driven is enough to point at a second ecosystem later.
+- **Agents propose, the human approves.** Worker agents acting on overseen repos **only ever open PRs, never push** — and every PR they open is surfaced to the human for review (see the PR Review Queue). Autonomy produces reviewable artifacts, not silent changes.
 
 ---
 
@@ -171,8 +173,10 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 ## Phase M — Multi-project foundation (the spine) 🔴  ← TOP PRODUCT PRIORITY
 *Hold the whole Livana ecosystem at once. Everything ops-related builds on this.*
 
-- **Project registry** — a list of overseen repos (start: the 3 Livana repos), each with a
-  cwd, display name, and per-project config. Stored in SQLite (`store.ts`), editable.
+- **Project registry (generic)** — a list of overseen repos, each with a cwd, display name,
+  and per-project config (analytics IDs, CI commands, PR rules). Stored in SQLite (`store.ts`),
+  editable. **Ecosystem-agnostic by design** — the 3 Livana repos are just the seed entries;
+  pointing Artemis at a different ecosystem is adding rows, not changing code.
 - **Project switcher** — titlebar/HUD control to set the active project; the agent loop's
   `repoRoot()` becomes per-project instead of hardwired to Artemis's own repo.
 - **Per-project memory namespaces** — facts/episodes scoped to a repo (pairs with Phase 3),
@@ -188,7 +192,8 @@ touches all three pillars, read-mostly and safe:
 2. **Reach (read-only):** one GA4 overview for the active project via the Google Analytics
    Data API (users/sessions last 7d) — no writes, no actions.
 3. **Worker (gated):** given an issue, a worker sub-agent opens a **PR** in the right repo
-   (runs that repo's checks first where they exist) — never pushes to main.
+   (runs that repo's checks first where they exist) — never pushes to main — and logs it to a
+   minimal **PR Review Queue** card (link + reviewed checkbox), the seed of the Phase 6 queue.
 If this slice feels right, widen each pillar (full reach in Phase 5, full workers + digests
 in Phase 6). If the shape's wrong, you learn now, not after building two whole phases.
 
@@ -247,10 +252,17 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 
 - **Sidecar brain daemon** — move agent loop to a persistent local process; Electron becomes a reconnectable face (cornerstone level 2, lands here because proactivity needs it too)
 - **Scheduling / cron** — run tasks on timer or trigger ("every morning, brief me")
-- **Background agents** — long-running tasks that report back via notification
-- **Watchers** — monitor a repo, inbox, deploy; surface what changed
+- **Background / worker agents** — long-running fix-it sub-agents across repos. Each runs the
+  target repo's own checks (where they exist), then **opens a PR — never pushes**. Multiple
+  can run in tandem.
+- **PR Review Queue (UI card)** — every PR a worker agent opens is logged to a persistent card
+  (repo · title · agent · timestamp · link-out · reviewed checkbox), stored in SQLite so it
+  survives restart. Reuben comes back in the morning, clicks through each PR, and checks it off.
+  This is the human-approval surface for agent autonomy.
+- **Watchers** — monitor a repo, inbox, deploy, analytics; surface what changed
 - **System notifications** + "what I did while you were away" digest
-- **Done when:** Artemis tells *you* things, at the right time, without a prompt
+- **Done when:** Artemis tells *you* things at the right time, and overnight worker-agent PRs
+  are waiting in the review queue for you to approve over coffee.
 
 ## Phase 7 — The HUD 🟢
 *A presence, not a window.*
