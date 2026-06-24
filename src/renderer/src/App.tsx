@@ -517,17 +517,7 @@ export default function App() {
           <Hexagon size={14} strokeWidth={2.5} /> ARTEMIS
         </span>
         <div className="titlebar-right">
-          {/* Context */}
-          <button
-            className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
-            onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
-            title="Switch / manage projects"
-          >
-            <FolderGit2 size={13} />
-            <span className="btn-tag">PROJECT</span>
-            {activeProject?.name ?? '—'}
-            <ChevronDown size={12} className="btn-caret" />
-          </button>
+          {/* Left: primary action */}
           <button
             className="new-convo"
             onClick={newConversation}
@@ -538,7 +528,17 @@ export default function App() {
 
           <span className="titlebar-spacer" />
 
-          {/* Actions */}
+          {/* Right: context + management + status */}
+          <button
+            className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
+            onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
+            title="Switch / manage projects"
+          >
+            <FolderGit2 size={13} />
+            <span className="btn-tag">PROJECT</span>
+            {activeProject?.name ?? '—'}
+            <ChevronDown size={12} className="btn-caret" />
+          </button>
           <button
             className={`pr-queue-btn ${pendingPrs > 0 ? 'on' : ''}`}
             onClick={() => (showPrs ? setShowPrs(false) : openPrs())}
