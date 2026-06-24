@@ -1,117 +1,52 @@
+import Anthropic from '@anthropic-ai/sdk'
 import { app, BrowserWindow } from 'electron'
-import { join } from 'path'
-import { existsSync } from 'fs'
-import { homedir } from 'os'
+import { join, dirname, resolve } from 'path'
 import { promises as fs } from 'fs'
-import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
-import { z } from 'zod'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import { glob } from 'glob'
 import { getApiKey } from './secrets'
-import { saveTurn, loadLastTurn, markTurnClaimed, appendMessage, getModel } from './store'
 import { loadMemory, saveMemory } from './memory'
+import {
+  getModel,
+  loadRecentMessages,
+  appendMessage,
+  saveTurn,
+  loadLastTurn,
+  markTurnClaimed,
+  startNewConversation,
+  type StoredTurn
+} from './store'
 
-/**
- * First-class memory tools (Phase 0): an in-process MCP server so the operator can
- * curate its own persistent memory mid-conversation, not just have it injected at the
- * start. Surfaced to the model as `mcp__memory__save_memory` / `__recall_memory`.
- */
-const memoryServer = createSdkMcpServer({
-  name: 'memory',
-  version: '1.0.0',
-  tools: [
-    tool(
-      'save_memory',
-      'Save a durable fact to persistent memory so you remember it across sessions. Use for stable facts about the user, their preferences, projects, or decisions — never ephemeral chatter. Returns the file it was written to.',
-      {
-        name: z.string().describe('short kebab-case slug naming the fact (used as the filename)'),
-        description: z.string().describe('one-line summary, shown in the memory index'),
-        type: z
-          .enum(['user', 'feedback', 'project', 'reference'])
-          .describe('category: who the user is / how to work / ongoing work / external pointer'),
-        body: z.string().describe('the fact itself, in full')
-      },
-      async (args) => {
-        const { file } = await saveMemory(args)
-        invalidateSystemCache() // rebuild on next turn so the new fact is injected
-        return { content: [{ type: 'text', text: `Saved to memory (${file}).` }] }
-      }
-    ),
-    tool(
-      'recall_memory',
-      'Recall everything in persistent memory — the index plus every saved fact. Use to check what you already know about the user or their projects before answering.',
-      {},
-      async () => {
-        const { index, facts } = await loadMemory()
-        const text = facts.length
-          ? `${index.trim()}\n\n${facts.map((f) => f.trim()).join('\n\n---\n\n')}`
-          : 'No memories saved yet.'
-        return { content: [{ type: 'text', text }] }
-      }
-    )
-  ]
-})
+const execAsync = promisify(exec)
 
-/**
- * Artemis's mind: the Claude Agent SDK agentic loop.
- *
- * Auth is subscription-first — if the user is logged into Claude Code (credentials
- * in ~/.claude / OS keychain), the SDK inherits that login and runs on the flat
- * subscription rate. We only inject a stored ANTHROPIC_API_KEY when there's no
- * login to inherit (setting the key would otherwise override the subscription).
- *
- * Self-hosting: cwd is Artemis's own repo, so it can read and edit its own source,
- * and run its terminal — gated by canUseTool (routed to the renderer for approval).
- */
-
-// The model is a stored preference (store.getModel) — defaults to Sonnet for speed/cost,
-// switchable to Opus from the UI — read fresh each turn rather than hardcoded.
-
-// Marker the operator appends to carry a short, spoken-aloud summary that is
-// distinct from the on-screen answer. Everything after it is the voice line and
-// is hidden from the transcript. Kept in sync with the renderer (agent/speech.ts).
+// Marker carried in every reply: everything after it is spoken aloud and hidden
+// from the on-screen transcript. Kept in sync with renderer/agent/speech.ts.
 const SAY_MARKER = '⟦say⟧'
 
-/** Split a reply into the on-screen text and the (optional) spoken-aloud line. */
-function splitSpeech(text: string): { display: string; speech: string } {
-  const i = text.indexOf(SAY_MARKER)
-  if (i === -1) return { display: text, speech: '' }
-  return {
-    display: text.slice(0, i).trimEnd(),
-    speech: text.slice(i + SAY_MARKER.length).trim()
-  }
-}
-
-// Dangerous shell patterns we refuse outright, before even asking the user.
+// Patterns we refuse without asking the user.
 const DANGEROUS = /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot|>\s*\/dev\/sd)/i
 
-const READ_ONLY = new Set(['Read', 'Glob', 'Grep', 'NotebookRead'])
+// Tools that need no permission prompt (read-only + our own memory ops).
+const AUTO_ALLOW = new Set(['Read', 'Glob', 'Grep', 'save_memory', 'recall_memory', 'WebFetch'])
 
 function repoRoot(): string {
-  // Dev: app path is the repo root. Self-hosting points the operator at itself.
   return app.getAppPath()
 }
 
-let _hasLogin: boolean | null = null
-async function hasSubscriptionLogin(): Promise<boolean> {
-  if (_hasLogin === null) _hasLogin = existsSync(join(homedir(), '.claude'))
-  return _hasLogin
-}
+// ─── System prompt cache ───────────────────────────────────────────────────
 
-// Cached system append: rebuilt from disk only when memory changes or the cache expires.
-// Avoids file I/O on every turn; invalidated explicitly by invalidateSystemCache().
-let _systemAppendCache: string | null = null
-let _systemAppendTime = 0
-const SYSTEM_CACHE_TTL = 60_000 // 60s — covers a normal conversation burst
+let _systemCache: string | null = null
+let _systemCacheTime = 0
+const SYSTEM_CACHE_TTL = 60_000
 
 export function invalidateSystemCache(): void {
-  _systemAppendCache = null
+  _systemCache = null
 }
 
-/** Build the system prompt: Claude Code preset + Artemis identity + memory. */
-async function buildSystemAppend(): Promise<string> {
+async function buildSystemPrompt(): Promise<string> {
   const now = Date.now()
-  if (_systemAppendCache && now - _systemAppendTime < SYSTEM_CACHE_TTL) {
-    return _systemAppendCache
-  }
+  if (_systemCache && now - _systemCacheTime < SYSTEM_CACHE_TTL) return _systemCache
 
   const parts: string[] = []
   try {
@@ -120,8 +55,6 @@ async function buildSystemAppend(): Promise<string> {
     parts.push('Your name is Artemis. You are a Claude-based operator.')
   }
 
-  // Persistent memory (Phase 0): load the markdown fact store so the operator actually
-  // *uses* what it knows about the user and their projects — not just writes to it.
   try {
     const { index, facts } = await loadMemory()
     if (facts.length) {
@@ -140,21 +73,18 @@ async function buildSystemAppend(): Promise<string> {
       )
     }
   } catch {
-    // no memory store yet — fine, the operator simply has nothing saved
+    // no memory store yet
   }
 
-  // Spoken summary: the chat shows the full answer; the voice should be conversational.
   parts.push(
     [
-      'SPOKEN SUMMARY — you have a voice, and it should sound like a person, not a recital.',
+      `SPOKEN SUMMARY — you have a voice, and it should sound like a person, not a recital.`,
       `End every reply with a final line that starts with the marker ${SAY_MARKER} followed by ONE or TWO short, natural sentences capturing the gist — what you did, found, or need next. No markdown, code, lists, or file paths in this line; write it to be heard, not read.`,
       `Everything before ${SAY_MARKER} is shown on screen; everything after it is spoken aloud and hidden from the transcript. Example ending:`,
       `${SAY_MARKER} Done — I trimmed the voice down to a quick summary and smoothed out the chat. Want me to try it live?`
     ].join('\n')
   )
 
-  // Chat formatting: the on-screen answer renders as markdown with single line breaks
-  // preserved, so structure multi-point replies for the eye.
   parts.push(
     [
       'CHAT FORMATTING — the on-screen answer renders as GitHub-flavoured markdown with',
@@ -165,34 +95,470 @@ async function buildSystemAppend(): Promise<string> {
     ].join('\n')
   )
 
-  // Tool discipline: don't call tools for simple conversational replies — each tool call
-  // is a full extra API round-trip. Only reach for Read/Grep/Bash when the task actually
-  // requires inspecting or modifying files.
   parts.push(
     'TOOL DISCIPLINE — for conversational replies, greetings, or answers you already know, respond directly without calling any tools. Only use Read, Grep, Glob, Bash, Edit, or Write when the task genuinely requires inspecting or changing files. Unnecessary tool calls add latency.'
   )
 
-  _systemAppendCache = parts.join('\n\n')
-  _systemAppendTime = now
-  return _systemAppendCache
+  _systemCache = parts.join('\n\n')
+  _systemCacheTime = now
+  return _systemCache
 }
 
-export interface PermissionAsker {
-  (req: { toolName: string; input: unknown }): Promise<boolean>
+// ─── Tool definitions ──────────────────────────────────────────────────────
+
+const TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'Read',
+    description:
+      'Read a file from the local filesystem. Returns the file content with line numbers. Use offset/limit to read a slice of a large file.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        file_path: { type: 'string', description: 'Absolute path to the file to read' },
+        offset: { type: 'number', description: 'Line number to start reading from (1-indexed)' },
+        limit: { type: 'number', description: 'Maximum number of lines to read' }
+      },
+      required: ['file_path']
+    }
+  },
+  {
+    name: 'Write',
+    description:
+      'Write content to a file. Creates parent directories if needed. Overwrites the file if it exists.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        file_path: { type: 'string', description: 'Absolute path to the file to write' },
+        content: { type: 'string', description: 'Content to write to the file' }
+      },
+      required: ['file_path', 'content']
+    }
+  },
+  {
+    name: 'Edit',
+    description:
+      'Replace an exact string in a file. The old_string must match exactly (including whitespace). Fails if old_string is not found.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        file_path: { type: 'string', description: 'Absolute path to the file to edit' },
+        old_string: { type: 'string', description: 'The exact text to find and replace' },
+        new_string: { type: 'string', description: 'The text to replace it with' },
+        replace_all: {
+          type: 'boolean',
+          description: 'Replace all occurrences (default: false, replace only the first)'
+        }
+      },
+      required: ['file_path', 'old_string', 'new_string']
+    }
+  },
+  {
+    name: 'Glob',
+    description:
+      'Find files matching a glob pattern. Returns absolute paths sorted by modification time.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        pattern: { type: 'string', description: 'Glob pattern, e.g. "**/*.ts" or "src/**/*.tsx"' },
+        path: {
+          type: 'string',
+          description: 'Directory to search in (defaults to the repo root)'
+        }
+      },
+      required: ['pattern']
+    }
+  },
+  {
+    name: 'Grep',
+    description:
+      'Search for a regex pattern in files. Returns matching lines with file and line number.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        pattern: { type: 'string', description: 'Regex pattern to search for' },
+        path: {
+          type: 'string',
+          description: 'File or directory to search in (defaults to repo root)'
+        },
+        glob: {
+          type: 'string',
+          description: 'File glob filter, e.g. "*.ts" (searches all files if omitted)'
+        },
+        output_mode: {
+          type: 'string',
+          enum: ['content', 'files_with_matches', 'count'],
+          description: 'content = matching lines, files_with_matches = file paths only, count = match counts'
+        },
+        '-i': { type: 'boolean', description: 'Case-insensitive search' }
+      },
+      required: ['pattern']
+    }
+  },
+  {
+    name: 'Bash',
+    description:
+      'Run a shell command. Working directory is the repo root. Avoid destructive commands — they will be blocked. Timeout defaults to 30s.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        command: { type: 'string', description: 'Shell command to execute' },
+        timeout: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
+        description: {
+          type: 'string',
+          description: 'Short human-readable description of what this command does'
+        }
+      },
+      required: ['command']
+    }
+  },
+  {
+    name: 'WebFetch',
+    description: 'Fetch a URL and return the page content as plain text (HTML stripped).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        url: { type: 'string', description: 'The URL to fetch' },
+        prompt: {
+          type: 'string',
+          description: 'What to extract or look for in the page (hint, not a filter)'
+        }
+      },
+      required: ['url']
+    }
+  },
+  {
+    name: 'save_memory',
+    description:
+      'Save a durable fact to persistent memory so you remember it across sessions. Use for stable facts about the user, their preferences, projects, or decisions — never ephemeral chatter.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Short kebab-case slug naming the fact (used as the filename)'
+        },
+        description: {
+          type: 'string',
+          description: 'One-line summary, shown in the memory index'
+        },
+        type: {
+          type: 'string',
+          enum: ['user', 'feedback', 'project', 'reference'],
+          description:
+            'Category: who the user is / how to work with them / ongoing work / external pointer'
+        },
+        body: { type: 'string', description: 'The fact itself, in full' }
+      },
+      required: ['name', 'description', 'type', 'body']
+    }
+  },
+  {
+    name: 'recall_memory',
+    description:
+      'Recall everything in persistent memory — the index plus every saved fact. Use to check what you already know before answering.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: []
+    }
+  }
+]
+
+// ─── Tool implementations ─────────────────────────────────────────────────
+
+async function toolRead(input: {
+  file_path: string
+  offset?: number
+  limit?: number
+}): Promise<string> {
+  const content = await fs.readFile(input.file_path, 'utf8')
+  const lines = content.split('\n')
+  const start = Math.max(0, (input.offset ?? 1) - 1)
+  const end = input.limit != null ? start + input.limit : lines.length
+  return lines
+    .slice(start, end)
+    .map((l, i) => `${start + i + 1}\t${l}`)
+    .join('\n')
 }
 
-/**
- * Durable session state — deliberately kept in the *main* process, which survives
- * renderer hot-reloads (electron-vite only reloads the renderer when renderer files
- * change). This is what lets a conversation persist across the code changes Artemis
- * makes to its own UI.
- *
- *  - `currentSessionId` is the Agent SDK session we `resume` on every turn, so the
- *    operator actually remembers prior turns. It's mirrored to disk so it also
- *    survives a full main-process restart (a rebuild of `src/main`).
- *  - `turns` buffers each turn's streamed text/result so a renderer that reloaded
- *    mid-answer can re-attach and recover what it missed (see `getResyncTurn`).
+async function toolWrite(input: { file_path: string; content: string }): Promise<string> {
+  await fs.mkdir(dirname(resolve(input.file_path)), { recursive: true })
+  await fs.writeFile(input.file_path, input.content, 'utf8')
+  return `Written ${input.content.length} bytes to ${input.file_path}`
+}
+
+async function toolEdit(input: {
+  file_path: string
+  old_string: string
+  new_string: string
+  replace_all?: boolean
+}): Promise<string> {
+  let content = await fs.readFile(input.file_path, 'utf8')
+  if (!content.includes(input.old_string)) {
+    throw new Error(
+      `old_string not found in ${input.file_path}. The string must match exactly including whitespace.`
+    )
+  }
+  if (input.replace_all) {
+    content = content.split(input.old_string).join(input.new_string)
+  } else {
+    content = content.replace(input.old_string, input.new_string)
+  }
+  await fs.writeFile(input.file_path, content, 'utf8')
+  return `Edited ${input.file_path}`
+}
+
+async function toolGlob(input: { pattern: string; path?: string }): Promise<string> {
+  const cwd = input.path ? resolve(input.path) : repoRoot()
+  const files = await glob(input.pattern, { cwd, absolute: true, nodir: true })
+  // Sort by modification time (newest first)
+  const stats = await Promise.all(
+    files.map(async (f) => {
+      try {
+        const s = await fs.stat(f)
+        return { f, mtime: s.mtimeMs }
+      } catch {
+        return { f, mtime: 0 }
+      }
+    })
+  )
+  stats.sort((a, b) => b.mtime - a.mtime)
+  return stats.map((s) => s.f).join('\n') || '(no matches)'
+}
+
+async function toolGrep(input: {
+  pattern: string
+  path?: string
+  glob?: string
+  output_mode?: 'content' | 'files_with_matches' | 'count'
+  '-i'?: boolean
+}): Promise<string> {
+  const searchPath = input.path ? resolve(input.path) : repoRoot()
+  const mode = input.output_mode ?? 'content'
+  const flags = input['-i'] ? 'gi' : 'g'
+  let re: RegExp
+  try {
+    re = new RegExp(input.pattern, flags)
+  } catch {
+    throw new Error(`Invalid regex: ${input.pattern}`)
+  }
+
+  // Collect files to search
+  const globPattern = input.glob ?? '**/*'
+  let files: string[]
+  try {
+    const stat = await fs.stat(searchPath)
+    if (stat.isFile()) {
+      files = [searchPath]
+    } else {
+      files = await glob(globPattern, {
+        cwd: searchPath,
+        absolute: true,
+        nodir: true,
+        ignore: ['**/node_modules/**', '**/.git/**', '**/out/**', '**/dist/**']
+      })
+    }
+  } catch {
+    files = []
+  }
+
+  const results: string[] = []
+  let totalCount = 0
+
+  for (const file of files) {
+    let text: string
+    try {
+      text = await fs.readFile(file, 'utf8')
+    } catch {
+      continue // skip binary files
+    }
+    // Reset lastIndex between files
+    re.lastIndex = 0
+    const lines = text.split('\n')
+    const matchingLines: string[] = []
+    let fileCount = 0
+
+    for (let i = 0; i < lines.length; i++) {
+      re.lastIndex = 0
+      if (re.test(lines[i])) {
+        matchingLines.push(`${i + 1}:${lines[i]}`)
+        fileCount++
+      }
+    }
+
+    if (fileCount === 0) continue
+    totalCount += fileCount
+
+    if (mode === 'files_with_matches') {
+      results.push(file)
+    } else if (mode === 'count') {
+      results.push(`${file}: ${fileCount}`)
+    } else {
+      for (const line of matchingLines) results.push(`${file}:${line}`)
+    }
+  }
+
+  if (results.length === 0) return '(no matches)'
+  return results.join('\n')
+}
+
+async function toolBash(input: {
+  command: string
+  timeout?: number
+  description?: string
+}): Promise<string> {
+  if (DANGEROUS.test(input.command)) {
+    throw new Error('Refused: dangerous command blocked by Artemis.')
+  }
+  const { stdout, stderr } = await execAsync(input.command, {
+    cwd: repoRoot(),
+    timeout: input.timeout ?? 30_000,
+    maxBuffer: 2 * 1024 * 1024
+  })
+  return [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)'
+}
+
+async function toolWebFetch(input: { url: string; prompt?: string }): Promise<string> {
+  const res = await fetch(input.url, {
+    headers: { 'User-Agent': 'Artemis/1.0 (operator bot)' }
+  })
+  const html = await res.text()
+  // Strip tags and collapse whitespace
+  const text = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 50_000)
+  return text || '(empty page)'
+}
+
+async function toolSaveMemory(input: {
+  name: string
+  description: string
+  type: 'user' | 'feedback' | 'project' | 'reference'
+  body: string
+}): Promise<string> {
+  const { file } = await saveMemory(input)
+  invalidateSystemCache()
+  return `Saved to memory (${file}).`
+}
+
+async function toolRecallMemory(): Promise<string> {
+  const { index, facts } = await loadMemory()
+  return facts.length
+    ? `${index.trim()}\n\n${facts.map((f) => f.trim()).join('\n\n---\n\n')}`
+    : 'No memories saved yet.'
+}
+
+async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+  switch (name) {
+    case 'Read':
+      return toolRead(input as Parameters<typeof toolRead>[0])
+    case 'Write':
+      return toolWrite(input as Parameters<typeof toolWrite>[0])
+    case 'Edit':
+      return toolEdit(input as Parameters<typeof toolEdit>[0])
+    case 'Glob':
+      return toolGlob(input as Parameters<typeof toolGlob>[0])
+    case 'Grep':
+      return toolGrep(input as Parameters<typeof toolGrep>[0])
+    case 'Bash':
+      return toolBash(input as Parameters<typeof toolBash>[0])
+    case 'WebFetch':
+      return toolWebFetch(input as Parameters<typeof toolWebFetch>[0])
+    case 'save_memory':
+      return toolSaveMemory(input as Parameters<typeof toolSaveMemory>[0])
+    case 'recall_memory':
+      return toolRecallMemory()
+    default:
+      throw new Error(`Unknown tool: ${name}`)
+  }
+}
+
+// ─── Anthropic client ──────────────────────────────────────────────────────
+
+let _client: Anthropic | null = null
+
+async function getClient(): Promise<Anthropic> {
+  if (_client) return _client
+  const key = await getApiKey()
+  if (!key) {
+    throw new Error(
+      'No API key found. Set ANTHROPIC_API_KEY in your environment or add one in Artemis settings.'
+    )
+  }
+  _client = new Anthropic({ apiKey: key })
+  return _client
+}
+
+/** Convert SQLite message history into Anthropic MessageParam format.
+ *  - Skip leading assistant messages (API requires first message to be user).
+ *  - Merge consecutive same-role messages to satisfy the alternation constraint.
+ *  - Mark the last assistant message as a cache point so Anthropic caches the
+ *    conversation prefix (prompt caching: 90% cheaper on cache hits).
  */
+function buildMessages(
+  history: { role: 'user' | 'assistant'; text: string }[],
+  newUserMessage: string
+): Anthropic.MessageParam[] {
+  // Drop leading assistant messages (API constraint: must start with user)
+  const firstUser = history.findIndex((m) => m.role === 'user')
+  const trimmed = firstUser >= 0 ? history.slice(firstUser) : []
+
+  const params: Anthropic.MessageParam[] = []
+
+  // Merge consecutive same-role turns (can happen after error recovery)
+  for (const m of trimmed) {
+    const prev = params[params.length - 1]
+    if (prev && prev.role === m.role) {
+      prev.content = (prev.content as string) + '\n\n' + m.text
+    } else {
+      params.push({ role: m.role, content: m.text })
+    }
+  }
+
+  // Mark the last assistant message as a cache anchor so the prefix is cached
+  const lastAssistantIdx = [...params].reverse().findIndex((m) => m.role === 'assistant')
+  if (lastAssistantIdx >= 0) {
+    const idx = params.length - 1 - lastAssistantIdx
+    const msg = params[idx]
+    params[idx] = {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: msg.content as string,
+          // @ts-expect-error cache_control is a beta header not yet typed in sdk
+          cache_control: { type: 'ephemeral' }
+        }
+      ]
+    }
+  }
+
+  // Append the new user turn
+  params.push({ role: 'user', content: newUserMessage })
+  return params
+}
+
+// ─── Speechline helpers ────────────────────────────────────────────────────
+
+function splitSpeech(text: string): { display: string; speech: string } {
+  const i = text.indexOf(SAY_MARKER)
+  if (i === -1) return { display: text, speech: '' }
+  return {
+    display: text.slice(0, i).trimEnd(),
+    speech: text.slice(i + SAY_MARKER.length).trim()
+  }
+}
+
+// ─── Turn buffer (in-flight turn recovery across hot-reloads) ─────────────
+
 interface TurnBuffer {
   requestId: string
   text: string
@@ -203,60 +569,10 @@ interface TurnBuffer {
   claimed: boolean
 }
 
-let currentSessionId: string | null = null
-let sessionLoaded = false
 const turns = new Map<string, TurnBuffer>()
 let lastTurnId: string | null = null
 
-function sessionFile(): string {
-  return join(app.getPath('userData'), 'artemis-session.json')
-}
-
-async function loadSessionId(): Promise<void> {
-  if (sessionLoaded) return
-  sessionLoaded = true
-  try {
-    const data = JSON.parse(await fs.readFile(sessionFile(), 'utf8'))
-    if (typeof data.sessionId === 'string') currentSessionId = data.sessionId
-  } catch {
-    // no prior session on disk — first run, nothing to resume
-  }
-}
-
-async function saveSessionId(id: string): Promise<void> {
-  currentSessionId = id
-  try {
-    await fs.writeFile(sessionFile(), JSON.stringify({ sessionId: id }), 'utf8')
-  } catch (err) {
-    console.error('[artemis] failed to persist session id:', err)
-  }
-}
-
-/**
- * Drop the current Agent SDK session so the next turn starts with fresh context —
- * the "new conversation" control. We mark the session as loaded so the old id isn't
- * re-read from disk, and remove the on-disk id so it doesn't survive a restart.
- */
-export async function resetSession(): Promise<void> {
-  currentSessionId = null
-  sessionLoaded = true
-  lastTurnId = null
-  try {
-    await fs.unlink(sessionFile())
-  } catch {
-    // no session file to remove — already fresh
-  }
-}
-
-/**
- * Snapshot of the most recent turn so a freshly-reloaded renderer can re-attach.
- * - In-flight turn: returned every time (the renderer must keep streaming it).
- * - Finished turn: returned once, then marked `claimed` so later reloads don't
- *   re-apply a stale answer over a transcript that's already up to date.
- */
 export function getResyncTurn(): TurnBuffer | null {
-  // Fast path: main is still alive (a renderer hot-reload). The live turn may still
-  // be streaming, so leave `done` null and let the renderer keep following events.
   if (lastTurnId) {
     const t = turns.get(lastTurnId)
     if (t) {
@@ -267,11 +583,7 @@ export function getResyncTurn(): TurnBuffer | null {
       return t
     }
   }
-  // Slow path: the in-memory buffer is empty, so the main process restarted (a
-  // src/main rebuild). Recover the last turn from disk. A turn left unclaimed here
-  // never finished — its SDK stream died with the old process — so present whatever
-  // partial text we captured as a settled answer (done set) rather than hanging the
-  // UI in "busy", and commit it so it isn't lost on the next boot.
+  // Full restart: recover from SQLite
   const stored = loadLastTurn()
   if (!stored || stored.claimed || !stored.text.trim()) return null
   markTurnClaimed(stored.requestId)
@@ -287,18 +599,29 @@ export function getResyncTurn(): TurnBuffer | null {
   }
 }
 
-/**
- * Run one operator turn. Streams events to the renderer via webContents and uses
- * `askPermission` to gate write/exec tools through the UI.
- */
+// ─── Session / conversation reset ─────────────────────────────────────────
+
+// With the raw SDK, "session" is just the SQLite history. Resetting is
+// raising the view_floor (already handled by store.startNewConversation).
+export async function resetSession(): Promise<void> {
+  startNewConversation()
+  lastTurnId = null
+}
+
+// ─── Permission gate ───────────────────────────────────────────────────────
+
+export interface PermissionAsker {
+  (req: { toolName: string; input: unknown }): Promise<boolean>
+}
+
+// ─── Main agent loop ───────────────────────────────────────────────────────
+
 export async function runAgent(
   win: BrowserWindow,
   requestId: string,
   prompt: string,
   askPermission: PermissionAsker
 ): Promise<void> {
-  await loadSessionId()
-
   const turn: TurnBuffer = {
     requestId,
     text: '',
@@ -310,11 +633,11 @@ export async function runAgent(
   }
   turns.set(requestId, turn)
   lastTurnId = requestId
-  saveTurn(turn) // durable from the first moment, so a restart mid-answer can recover
-  // throttle cursor: we persist streaming text at most every ~700ms (tokens arrive
-  // far faster than we need to checkpoint them to disk)
+  saveTurn(turn)
+
   let lastPersist = 0
-  // keep the buffer bounded — drop the oldest finished turns
+
+  // Keep the in-memory buffer bounded
   if (turns.size > 8) {
     for (const [id, t] of turns) {
       if (turns.size <= 8) break
@@ -323,138 +646,147 @@ export async function runAgent(
   }
 
   const send = (payload: Record<string, unknown>) => {
-    if (typeof payload.state === 'string') turn.state = payload.state
+    if (typeof payload.state === 'string') turn.state = payload.state as string
     if (!win.isDestroyed()) win.webContents.send('agent:event', { requestId, ...payload })
-  }
-
-  // Subscription-first auth: only set the key when there's no login to inherit.
-  if (!process.env.ANTHROPIC_API_KEY && !(await hasSubscriptionLogin())) {
-    const key = await getApiKey()
-    if (key) process.env.ANTHROPIC_API_KEY = key
   }
 
   send({ state: 'thinking' })
 
-  const systemAppend = await buildSystemAppend()
+  try {
+    const client = await getClient()
+    const systemPrompt = await buildSystemPrompt()
+    const history = loadRecentMessages(60)
+    const model = getModel()
 
-  // One streaming attempt. Returns 'retry-fresh' if a resume target was missing
-  // (e.g. the on-disk session was pruned or the cwd changed) and we produced no
-  // output yet — in that case we drop the stale id and start a clean session so a
-  // turn is never lost to an unresumable id.
-  const attempt = async (resumeId: string | null): Promise<'ok' | 'retry-fresh'> => {
-    let produced = false
-    let full = ''
-    try {
-      const stream = query({
-        prompt,
-        options: {
-          cwd: repoRoot(),
-          model: getModel(),
-          includePartialMessages: true,
-          settingSources: ['project'],
-          resume: resumeId ?? undefined,
-          systemPrompt: {
-            type: 'preset',
-            preset: 'claude_code',
-            append: systemAppend
-          },
-          mcpServers: { memory: memoryServer },
-          allowedTools: [
-            'Read',
-            'Glob',
-            'Grep',
-            'Edit',
-            'Write',
-            'Bash',
-            'WebFetch',
-            'WebSearch',
-            'mcp__memory__save_memory',
-            'mcp__memory__recall_memory'
-          ],
-          permissionMode: 'default',
-          canUseTool: async (toolName: string, input: Record<string, unknown>) => {
-            // read-only tools and memory curation run freely (no permission prompt)
-            if (READ_ONLY.has(toolName) || toolName.startsWith('mcp__memory__')) {
-              return { behavior: 'allow', updatedInput: input }
-            }
-            // refuse obviously destructive shell commands without asking
-            if (toolName === 'Bash' && typeof input.command === 'string' && DANGEROUS.test(input.command)) {
-              return { behavior: 'deny', message: 'Refused: destructive command blocked by Artemis.' }
-            }
-            send({ state: 'executing' })
-            const ok = await askPermission({ toolName, input })
-            return ok
-              ? { behavior: 'allow', updatedInput: input }
-              : { behavior: 'deny', message: 'Denied by user.' }
+    // Build the message array: history + new user message, with cache anchor
+    const localMessages: Anthropic.MessageParam[] = buildMessages(history, prompt)
+
+    let accText = ''
+
+    // The agentic loop: stream response, execute tool calls, repeat until end_turn.
+    while (true) {
+      let currentText = ''
+      send({ state: 'thinking' })
+
+      const stream = client.messages.stream({
+        model,
+        max_tokens: 8096,
+        system: [
+          {
+            type: 'text',
+            text: systemPrompt,
+            // @ts-expect-error cache_control beta
+            cache_control: { type: 'ephemeral' }
           }
-        }
+        ],
+        messages: localMessages,
+        tools: TOOLS,
+        betas: ['prompt-caching-2024-07-31']
       })
 
-      for await (const message of stream as AsyncIterable<any>) {
-        // Capture/refresh the resumable session id from any message that carries it.
-        if (typeof message.session_id === 'string' && message.session_id !== currentSessionId) {
-          await saveSessionId(message.session_id)
-        }
-        if (message.type === 'stream_event') {
-          const ev = message.event
-          if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-            produced = true
-            full += ev.delta.text
-            turn.text = full
-            send({ token: ev.delta.text })
-            const now = Date.now()
-            if (now - lastPersist > 700) {
-              lastPersist = now
-              saveTurn(turn)
-            }
-          }
-        } else if (message.type === 'assistant') {
-          // surface tool use as "executing" state
-          for (const block of message.message?.content ?? []) {
-            if (block?.type === 'tool_use') send({ state: 'executing' })
-          }
-        } else if (message.type === 'result') {
-          produced = true
-          if (message.subtype === 'success') {
-            const { display, speech } = splitSpeech((message.result ?? full).trim())
-            turn.done = display
-            turn.speech = speech
-            turn.claimed = true
-            appendMessage('assistant', display) // commit to the durable transcript
+      // Stream text tokens to the renderer in real-time
+      for await (const event of stream as AsyncIterable<Anthropic.MessageStreamEvent>) {
+        if (
+          event.type === 'content_block_delta' &&
+          event.delta.type === 'text_delta'
+        ) {
+          const token = event.delta.text
+          currentText += token
+          accText += token
+          turn.text = accText
+          send({ token })
+          const now = Date.now()
+          if (now - lastPersist > 700) {
+            lastPersist = now
             saveTurn(turn)
-            send({ done: display, speech, cost: message.total_cost_usd })
-          } else {
-            turn.error = `Stopped: ${message.subtype}`
-            turn.claimed = true
-            appendMessage('assistant', `⚠️ ${turn.error}`)
-            saveTurn(turn)
-            send({ error: turn.error, state: 'error' })
           }
         }
       }
-      return 'ok'
-    } catch (err: any) {
-      // A resume that fails before producing anything → stale id; retry clean.
-      if (resumeId && !produced) {
-        console.error('[artemis] resume failed, starting a fresh session:', err?.message ?? err)
-        return 'retry-fresh'
-      }
-      const msg = String(err?.message ?? err)
-      // surface an auth problem with an actionable hint
-      const isAuth = /auth|api[_-]?key|401|unauthor/i.test(msg)
-      turn.error = isAuth
-        ? 'Not authenticated. Log into Claude Code (run `claude` once), or add an API key in settings.'
-        : msg
-      turn.claimed = true
-      appendMessage('assistant', `⚠️ ${turn.error}`)
-      saveTurn(turn)
-      send({ error: turn.error, state: 'error' })
-      return 'ok'
-    }
-  }
 
-  if ((await attempt(currentSessionId)) === 'retry-fresh') {
-    currentSessionId = null
-    await attempt(null)
+      const msg = await stream.finalMessage()
+
+      // Add the assistant's full response (text + any tool_use blocks) to local context
+      localMessages.push({ role: 'assistant', content: msg.content })
+
+      if (msg.stop_reason !== 'tool_use') break // done — exit the loop
+
+      // Execute tool calls
+      send({ state: 'executing' })
+      const toolResults: Anthropic.ToolResultBlockParam[] = []
+
+      for (const block of msg.content) {
+        if (block.type !== 'tool_use') continue
+
+        const toolInput = block.input as Record<string, unknown>
+
+        // Permission gate
+        if (!AUTO_ALLOW.has(block.name)) {
+          if (
+            block.name === 'Bash' &&
+            typeof toolInput.command === 'string' &&
+            DANGEROUS.test(toolInput.command)
+          ) {
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: 'Refused: destructive command blocked by Artemis.',
+              is_error: true
+            })
+            continue
+          }
+
+          const ok = await askPermission({ toolName: block.name, input: toolInput })
+          if (!ok) {
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: 'Denied by user.',
+              is_error: true
+            })
+            continue
+          }
+        }
+
+        // Execute
+        try {
+          const result = await executeTool(block.name, toolInput)
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: result
+          })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: `Error: ${msg}`,
+            is_error: true
+          })
+        }
+      }
+
+      // Feed tool results back and loop
+      localMessages.push({ role: 'user', content: toolResults })
+    }
+
+    // Turn complete — strip the ⟦say⟧ marker and commit
+    const { display, speech } = splitSpeech(accText.trim())
+    turn.done = display
+    turn.speech = speech
+    turn.claimed = true
+    appendMessage('assistant', display)
+    saveTurn(turn)
+    send({ done: display, speech, state: 'idle', cost: 0 })
+  } catch (err: unknown) {
+    const raw = err instanceof Error ? err.message : String(err)
+    const isAuth = /auth|api[_-]?key|401|unauthor|no api key/i.test(raw)
+    turn.error = isAuth
+      ? 'Not authenticated. Set ANTHROPIC_API_KEY in your environment or add a key in Artemis settings.'
+      : raw
+    turn.claimed = true
+    appendMessage('assistant', `⚠️ ${turn.error}`)
+    saveTurn(turn)
+    send({ error: turn.error, state: 'error' })
   }
 }
