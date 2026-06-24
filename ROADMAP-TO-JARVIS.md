@@ -125,9 +125,10 @@ brain (level 2) remains future work, slated alongside Phase 6.
 
 - ✅ **Capture foundation** — `useSpeech` grabs the mic, pulses the orb to your live voice, records, and emits mono 16kHz Float32 samples through a swappable `transcribe()` seam. Mic button + `listening` orb state + main-process mic permissions.
 - ✅ **Barge-in** — starting to listen cancels in-progress TTS.
-- ⏳ **Speech-to-text engine** — decided: **local Whisper via transformers.js in a Web Worker** (local-first). The seam (`agent/transcribe.ts`) is in place and currently returns null; wiring the worker is the next focused step. **← next**
+- ✅ **Speech-to-text engine** — local Whisper (`whisper-tiny.en`) via transformers.js in a Web Worker (`agent/whisper.worker.ts`). Model downloads once from the HF hub, then browser-cached (offline after). Builds clean; **pending a live restart to confirm runtime** (model fetch + mic).
+  - *CSP note:* needed a scoped relaxation in `index.html` — `wasm-unsafe-eval` + `connect-src` to the HF hub & jsDelivr (onnxruntime WASM). **Tightening path: vendor the model + WASM into the app to drop the remote `connect-src` and restore a strict CSP (true offline-first).**
 - ◻︎ **Wake word** ("Artemis…") for hands-free activation.
-- ◻︎ **Voice activity detection** so it knows when you've finished a thought (auto-stop).
+- ◻︎ **Voice activity detection** so it knows when you've finished a thought (auto-stop) — pairs well with upgrading `whisper-tiny.en` → `base` for accuracy.
 - **Done when:** you can hold a spoken back-and-forth, hands-free, and interrupt naturally.
 
 ## Phase 2 — A voice worth listening to 🟢→🔴
