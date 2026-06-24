@@ -4,6 +4,8 @@ import TerminalPane from './components/TerminalPane'
 import Chat, { type Message } from './components/Chat'
 import PermissionDialog, { type PermissionReq } from './components/PermissionDialog'
 import KeySetup from './components/KeySetup'
+import { ProjectsPanel } from './components/ProjectsPanel'
+import type { Project } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
@@ -28,6 +30,10 @@ export default function App() {
   const [micHint, setMicHint] = useState<string | null>(null)
   const [showUndo, setShowUndo] = useState(false) // "new conversation · Undo" toast
   const [model, setModel] = useState('claude-sonnet-4-6')
+  // Multi-project foundation: the repos Artemis oversees + the panel toggle.
+  const [projects, setProjects] = useState<Project[]>([])
+  const [showProjects, setShowProjects] = useState(false)
+  const [projectsBusy, setProjectsBusy] = useState(false)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -123,6 +129,34 @@ export default function App() {
       return next
     })
   }, [])
+
+  // Multi-project: load the registry on boot, and the add/remove/switch handlers.
+  useEffect(() => {
+    window.artemis?.projects?.list().then((p) => p && setProjects(p))
+  }, [])
+
+  const addProjects = useCallback(async () => {
+    setProjectsBusy(true)
+    try {
+      const updated = await window.artemis?.projects?.add()
+      if (updated) setProjects(updated)
+    } finally {
+      setProjectsBusy(false)
+    }
+  }, [])
+
+  const removeProject = useCallback(async (id: number) => {
+    const updated = await window.artemis?.projects?.remove(id)
+    if (updated) setProjects(updated)
+  }, [])
+
+  const selectProject = useCallback(async (path: string) => {
+    const updated = await window.artemis?.projects?.setActive(path)
+    if (updated) setProjects(updated)
+    setShowProjects(false)
+  }, [])
+
+  const activeProject = projects.find((p) => p.active)
 
   // Restore the transcript from the SQLite backbone; only greet on a genuinely fresh
   // start. Then reattach to any turn that was in flight when we (re)loaded.
@@ -420,6 +454,13 @@ export default function App() {
         <span className="brand">◈ ARTEMIS</span>
         <div className="titlebar-right">
           <button
+            className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
+            onClick={() => setShowProjects((v) => !v)}
+            title="Switch / manage projects"
+          >
+            ▣ {activeProject?.name ?? 'project'}
+          </button>
+          <button
             className="new-convo"
             onClick={newConversation}
             title="New conversation (keeps history)"
@@ -560,6 +601,17 @@ export default function App() {
           <span>Started a new conversation</span>
           <button onClick={undoNewConversation}>Undo</button>
         </div>
+      )}
+
+      {showProjects && (
+        <ProjectsPanel
+          projects={projects}
+          busy={projectsBusy}
+          onAdd={addProjects}
+          onRemove={removeProject}
+          onSelect={selectProject}
+          onClose={() => setShowProjects(false)}
+        />
       )}
     </div>
   )

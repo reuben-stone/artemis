@@ -1,5 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+export interface Project {
+  id: number
+  name: string
+  path: string
+  remote: string | null
+  branch: string | null
+  dirty: boolean
+  active: boolean
+  gh: { slug: string; url: string } | null
+}
+
 const api = {
   terminal: {
     spawn: (opts: { cols: number; rows: number }) =>
@@ -50,6 +61,14 @@ const api = {
       ipcRenderer.invoke('auth:status'),
     setKey: (key: string): Promise<void> => ipcRenderer.invoke('auth:setKey', key),
     clearKey: (): Promise<void> => ipcRenderer.invoke('auth:clearKey')
+  },
+  // Multi-project foundation: register/switch the repos Artemis oversees.
+  projects: {
+    list: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
+    // Opens a native multi-select folder picker; returns the updated list.
+    add: (): Promise<Project[]> => ipcRenderer.invoke('projects:add'),
+    remove: (id: number): Promise<Project[]> => ipcRenderer.invoke('projects:remove', id),
+    setActive: (path: string): Promise<Project[]> => ipcRenderer.invoke('projects:setActive', path)
   },
   agent: {
     run: (requestId: string, prompt: string): Promise<void> =>

@@ -11,6 +11,7 @@ import {
   executeTool
 } from '../src/main/agent'
 import { toOllamaMessages } from '../src/main/model/ollama'
+import { parseGitRemote } from '../src/main/github'
 
 /**
  * Artemis smoke harness — a fast, free, deterministic check that the core
@@ -139,6 +140,24 @@ describe('context — conversation assembly', () => {
     expect(msgs[0].role).toBe('user')
     expect(msgs[0].content).toBe('one\n\ntwo')
     expect(msgs[msgs.length - 1]).toEqual({ role: 'user', content: 'three' })
+  })
+})
+
+describe('multi-project — GitHub remote parsing', () => {
+  it('parses SSH and HTTPS GitHub remotes to slug + web url', () => {
+    expect(parseGitRemote('git@github.com:livana/scanner.git')).toEqual({
+      slug: 'livana/scanner',
+      url: 'https://github.com/livana/scanner'
+    })
+    expect(parseGitRemote('https://github.com/livana/web.git')?.slug).toBe('livana/web')
+    expect(parseGitRemote('https://github.com/livana/web')?.url).toBe(
+      'https://github.com/livana/web'
+    )
+  })
+  it('returns null for non-GitHub or empty remotes', () => {
+    expect(parseGitRemote('git@gitlab.com:foo/bar.git')).toBeNull()
+    expect(parseGitRemote('')).toBeNull()
+    expect(parseGitRemote(null)).toBeNull()
   })
 })
 

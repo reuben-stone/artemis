@@ -242,6 +242,7 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 *Act beyond the repo.*
 
 - **MCP integration** — calendar, email, GitHub, Slack, notes, smart home — gated by permission flow
+- **Product data connectors (read-only)** — pull from the Livana product databases (the Lumi/LumiLens **MongoDB Atlas**: reviews, subscribers, scan/usage records) for summaries and overviews. Start **read-only** behind a per-project connection config; any write capability is a separate, explicitly-gated decision. Pairs with the GA4 analytics intake to give Reuben a real "state of the products" briefing.
 - **Trust boundary for untrusted content** — the moment Artemis can *read* email/web AND *act* (send, book, run), prompt injection becomes a real attack surface ("ignore previous instructions and …" hidden in an email/page). The current `DANGEROUS` regex blocklist won't catch this. Required: treat all fetched/received content as untrusted data (never instructions), and require explicit confirmation for any *outward-effecting* action (send/post/pay/delete), separate from the existing command gate.
 - **Skill library** — reusable named procedures Artemis can invoke
 - **Web actions** beyond fetch/search — structured browsing

@@ -1,10 +1,13 @@
-import { app, shell, BrowserWindow, ipcMain, session, systemPreferences } from 'electron'
-import { join } from 'path'
+import { app, shell, BrowserWindow, ipcMain, session, systemPreferences, dialog } from 'electron'
+import { join, basename } from 'path'
 import os from 'os'
 import { existsSync } from 'fs'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent, getResyncTurn, resetSession, undoSession } from './agent'
+import { runAgent, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
+import { parseGitRemote } from './github'
 import {
   appendMessage,
   loadRecentMessages,
@@ -17,8 +20,48 @@ import {
   getOllamaHost,
   setOllamaHost,
   getOllamaModel,
-  setOllamaModel
+  setOllamaModel,
+  listProjects,
+  addProject,
+  removeProject,
+  getActiveProjectPath,
+  setActiveProjectPath,
+  ensureSelfProject
 } from './store'
+
+const execp = promisify(exec)
+
+// Read a repo's GitHub remote + current branch/dirty state for the Projects UI.
+// Best-effort: a non-git folder just yields nulls.
+async function gitInfo(path: string): Promise<{ remote: string | null; branch: string | null; dirty: boolean }> {
+  const run = async (cmd: string) => (await execp(cmd, { cwd: path })).stdout.trim()
+  let remote: string | null = null
+  let branch: string | null = null
+  let dirty = false
+  try {
+    remote = (await run('git config --get remote.origin.url')) || null
+  } catch {
+    /* no remote */
+  }
+  try {
+    branch = (await run('git rev-parse --abbrev-ref HEAD')) || null
+    dirty = (await run('git status --porcelain')).length > 0
+  } catch {
+    /* not a git repo */
+  }
+  return { remote, branch, dirty }
+}
+
+// The registry enriched with live git status + active flag, for the renderer.
+async function projectsWithStatus(): Promise<unknown[]> {
+  const active = getActiveProjectPath()
+  return Promise.all(
+    listProjects().map(async (p) => {
+      const { branch, dirty } = await gitInfo(p.path)
+      return { ...p, branch, dirty, active: p.path === active, gh: parseGitRemote(p.remote) }
+    })
+  )
+}
 
 // node-pty is a native module; load lazily so a build issue doesn't crash boot.
 let pty: typeof import('node-pty') | null = null
@@ -183,6 +226,38 @@ ipcMain.handle(
   }
 )
 
+// --- Projects (multi-project foundation) IPC ---
+ipcMain.handle('projects:list', () => projectsWithStatus())
+
+// Open a native folder picker (multi-select) and register each chosen folder,
+// auto-detecting its GitHub remote from `origin`.
+ipcMain.handle('projects:add', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const res = await dialog.showOpenDialog(win!, {
+    title: 'Add project folder(s)',
+    properties: ['openDirectory', 'multiSelections', 'createDirectory']
+  })
+  if (!res.canceled) {
+    for (const path of res.filePaths) {
+      const { remote } = await gitInfo(path)
+      addProject(basename(path), path, remote)
+    }
+  }
+  return projectsWithStatus()
+})
+
+ipcMain.handle('projects:remove', (_e, id: number) => {
+  removeProject(id)
+  invalidateSystemCache()
+  return projectsWithStatus()
+})
+
+ipcMain.handle('projects:setActive', (_e, path: string) => {
+  setActiveProjectPath(path)
+  invalidateSystemCache() // the active project is baked into the system prompt
+  return projectsWithStatus()
+})
+
 // --- Auth IPC ---
 ipcMain.handle('auth:status', async () => ({
   hasSubscription: existsSync(join(os.homedir(), '.claude')),
@@ -205,6 +280,8 @@ app.whenReady().then(() => {
     systemPreferences.askForMediaAccess('microphone').catch(() => {})
   }
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media')
+
+  ensureSelfProject() // seed Artemis's own repo so the project switcher is never empty
 
   createWindow()
   app.on('activate', () => {
