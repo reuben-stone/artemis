@@ -19,6 +19,32 @@ while keeping the careful-operator safety posture that already exists.
 
 ---
 
+## The mission has a target — the Livana ops layer
+
+Artemis isn't a generic personal assistant; its **killer daily use case is to be the AI
+operations layer for the Livana product ecosystem** (Livana Group Ltd — Reuben + brothers
+Kofi & Daniel Stone). That target reprioritizes everything below: build what serves
+multi-repo oversight first; treat voice polish and senses as supporting cast.
+
+**The ecosystem Artemis oversees — 3 repos (all on `~/Desktop`):**
+
+| Repo | What it is | Stack | Analytics / signals | CI |
+|---|---|---|---|---|
+| `livana-web` | Marketing site (livana.io) | SvelteKit, Vercel | GA4 `G-Q2CD264F3W`, Sentry, Vercel Analytics | none |
+| `livana-scanner` | Product monorepo (npm workspaces + Turbo): **Lumi Scanner** (Next.js, lumi.livana.io), **LumiLens** (Next.js + Anthropic, lumilens.livana.io), **worker** (Express on Railway), **Chrome extension** (spike); shared `scanner-core` engine | Next.js 16, MongoDB, Stripe, NextAuth | GA4 `G-2NG7EL8BGP` (scanner) / `G-9D9ENPK0SZ` (lens), per-product Sentry | ✅ Vitest, typecheck, lint-changed, daily selfscan, lighthouse |
+| `livana-audit` | Internal WCAG 2.2 audit tool | SvelteKit, MongoDB/GridFS | none | none |
+
+*(`livana-dashboard` is **obsolete** — its devops/ticketing moved into the scanner; excluded.)*
+
+**The three capability pillars this use case needs:**
+1. **Multi-project oversight** — hold all 3 repos at once: per-repo cwd, config, memory, and status.
+2. **Live analytics intake** — pull GA4 (Google Analytics Data API) + Sentry to give health/usage overviews per app.
+3. **Worker agents** — dispatch sub-agents to fix issues across repos, **producing gated PRs, never autonomous pushes** (run each repo's own checks first — the scanner has CI; web/audit don't, so extra caution there).
+
+These map to **Multi-project foundation → sidecar brain → reach (GA + GitHub) → worker agents + proactive digests**. Voice (Phases 1–2) and senses (Phase 4) are demoted below this spine.
+
+---
+
 ## Where we are today (June 2026)
 
 | Capability | State | Lives in |
@@ -142,7 +168,31 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 - ✅ Tool discipline hint in system prompt (no unnecessary tool calls for conversational replies)
 - ✅ Auth/error UX — `KeySetup` component + actionable auth error messages
 
-## Phase 1 — Give Artemis ears 🔴  ← ✅ STT working / wake word pending
+## Phase M — Multi-project foundation (the spine) 🔴  ← TOP PRODUCT PRIORITY
+*Hold the whole Livana ecosystem at once. Everything ops-related builds on this.*
+
+- **Project registry** — a list of overseen repos (start: the 3 Livana repos), each with a
+  cwd, display name, and per-project config. Stored in SQLite (`store.ts`), editable.
+- **Project switcher** — titlebar/HUD control to set the active project; the agent loop's
+  `repoRoot()` becomes per-project instead of hardwired to Artemis's own repo.
+- **Per-project memory namespaces** — facts/episodes scoped to a repo (pairs with Phase 3),
+  plus a shared "ecosystem" scope for cross-cutting facts.
+- **Per-project status** — last-touched, current branch, dirty/clean, last analytics pull.
+- **Done when:** Artemis can switch to `livana-scanner`, answer "what's the state of this
+  repo?", and act in its cwd — without losing its own self-repo as one project among many.
+
+### Walking skeleton — the first vertical slice (do this next)
+*Prove the whole shape cheaply before building each pillar out.* One thin path that
+touches all three pillars, read-mostly and safe:
+1. **Multi-project (min):** register the 3 repos; switch active project; agent acts in that cwd.
+2. **Reach (read-only):** one GA4 overview for the active project via the Google Analytics
+   Data API (users/sessions last 7d) — no writes, no actions.
+3. **Worker (gated):** given an issue, a worker sub-agent opens a **PR** in the right repo
+   (runs that repo's checks first where they exist) — never pushes to main.
+If this slice feels right, widen each pillar (full reach in Phase 5, full workers + digests
+in Phase 6). If the shape's wrong, you learn now, not after building two whole phases.
+
+## Phase 1 — Give Artemis ears 🔴  ← DEMOTED (below the ops spine) · ✅ STT working / wake word pending
 
 - ✅ `useSpeech` hook — mic capture, 16kHz mono Float32, orb amplitude from voice
 - ✅ `listening` orb state (cyan)
@@ -238,9 +288,18 @@ History is managed in SQLite (we already have it) — no more session ID file. P
 4. ✅ ~~Architecture milestone — own the agent loop~~ (commit `b01c148`)
 5. ✅ ~~`ModelClient` abstraction~~ — built in `src/main/model/`: Anthropic + Ollama backends, claude-cli stubbed. Switch via `window.artemis.agent.setBackendConfig({backend:'ollama', ollamaHost, ollamaModel})`. Renderer backend-picker UI still TODO (🟢, no restart).
 6. ✅ ~~Minimal eval harness~~ — `npm test` (vitest): 15 fast/free/deterministic smoke cases over read/edit/glob/grep/execute, speak-split, danger gate, memory recall, conversation assembly, Ollama translation. Electron + native-SQLite stubbed so it runs under plain Node. (Store view-floor/undo/turn-recovery still needs an Electron-context test — follow-up.)
-7. **Sidecar brain (cornerstone L2)** — pulled earlier; ends session-killing and unblocks proactivity + safe self-mod.
-8. Phase 1 completion — wake word + VAD
-9. Phase 2 — neural TTS
+7. **Walking skeleton — the Livana ops slice** (Phase M) ← *next*: register the 3 repos +
+   project switcher; one read-only GA4 overview; one gated worker-agent PR. Proves the spine.
+8. **Multi-project foundation** (Phase M, full) — registry, switcher, per-project cwd/memory/status.
+9. **Sidecar brain (cornerstone L2)** — now load-bearing: background workers + live monitoring
+   must outlive the Electron window. Pulled up; pairs naturally with the new always-on machine.
+10. **Reach** (Phase 5) — Google Analytics Data API + GitHub connectors (gated, PR-based).
+11. **Worker agents + proactive digests** (Phase 6) — fix-it sub-agents across repos; "what
+    changed / what needs attention" overviews.
+
+*Deferred below the spine:* harden the store with Electron-context tests + wire real cost
+visibility (do alongside the skeleton); then wake word + VAD (Phase 1), neural TTS (Phase 2),
+senses (Phase 4), local models (Phase 8).
 
 ---
 
