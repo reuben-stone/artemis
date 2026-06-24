@@ -28,8 +28,9 @@ import {
   getActiveProjectPath,
   setActiveProjectPath,
   ensureSelfProject,
-  getProjectGaProperty,
-  setProjectGaProperty,
+  getProjectGaProps,
+  setProjectGaProps,
+  type GaProp,
   listPrReviews,
   setPrReviewed,
   clearReviewedPrs
@@ -70,7 +71,7 @@ async function projectsWithStatus(): Promise<unknown[]> {
         dirty,
         active: p.path === active,
         gh: parseGitRemote(p.remote),
-        gaProperty: getProjectGaProperty(p.path)
+        gaProps: getProjectGaProps(p.path)
       }
     })
   )
@@ -271,8 +272,8 @@ ipcMain.handle('projects:setActive', (_e, path: string) => {
   return projectsWithStatus()
 })
 
-ipcMain.handle('projects:setGaProperty', (_e, { path, propertyId }: { path: string; propertyId: string }) => {
-  setProjectGaProperty(path, propertyId)
+ipcMain.handle('projects:setGaProps', (_e, { path, props }: { path: string; props: GaProp[] }) => {
+  setProjectGaProps(path, props)
   return projectsWithStatus()
 })
 

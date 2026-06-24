@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { X, CircleCheck, Circle } from 'lucide-react'
-import type { Project, ConnectionsStatus } from '../../../preload'
+import { X, CircleCheck, Circle, Plus, Loader2 } from 'lucide-react'
+import type { Project, ConnectionsStatus, GaProp } from '../../../preload'
 
 type Tab = 'model' | 'voice' | 'connections' | 'general'
 
@@ -30,7 +30,7 @@ export function SettingsModal(props: {
   onToggleTerminal: () => void
   // Connections
   projects: Project[]
-  onSetGaProperty: (path: string, propertyId: string) => void
+  onSetGaProps: (path: string, props: GaProp[]) => void
   onClose: () => void
 }): JSX.Element {
   const [tab, setTab] = useState<Tab>('model')
@@ -203,9 +203,63 @@ function GeneralTab(p: {
   )
 }
 
+/** One project's GA4 properties — a labelled list (a monorepo can have several). */
+function GaProjectEditor({
+  project,
+  onSet
+}: {
+  project: Project
+  onSet: (path: string, props: GaProp[]) => void
+}): JSX.Element {
+  const [rows, setRows] = useState<GaProp[]>(project.gaProps ?? [])
+  const commit = (next: GaProp[]): void => {
+    setRows(next)
+    onSet(project.path, next)
+  }
+  return (
+    <div className="conn-ga-project">
+      <div className="conn-ga-name">{project.name}</div>
+      {rows.map((row, i) => (
+        <div className="conn-ga-row" key={i}>
+          <input
+            className="ollama-field"
+            style={{ width: 110 }}
+            placeholder="label (e.g. Lumi)"
+            value={row.label}
+            onChange={(e) => commit(rows.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)))}
+            spellCheck={false}
+          />
+          <input
+            className="ollama-field"
+            style={{ width: 150 }}
+            placeholder="GA4 property id"
+            value={row.id}
+            onChange={(e) => commit(rows.map((r, j) => (j === i ? { ...r, id: e.target.value } : r)))}
+            spellCheck={false}
+          />
+          <button
+            className="conn-clear"
+            style={{ padding: '4px 8px' }}
+            onClick={() => commit(rows.filter((_, j) => j !== i))}
+            title="Remove"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      ))}
+      <button
+        className="conn-ga-add"
+        onClick={() => commit([...rows, { label: '', id: '' }])}
+      >
+        <Plus size={12} /> add property
+      </button>
+    </div>
+  )
+}
+
 function ConnectionsTab(p: {
   projects: Project[]
-  onSetGaProperty: (path: string, propertyId: string) => void
+  onSetGaProps: (path: string, props: GaProp[]) => void
 }): JSX.Element {
   const [status, setStatus] = useState<ConnectionsStatus | null>(null)
   const [keyDraft, setKeyDraft] = useState('')
@@ -214,8 +268,11 @@ function ConnectionsTab(p: {
     window.artemis?.connections?.status().then((s) => s && setStatus(s))
   }
   useEffect(refresh, [])
+  const loading = status === null
   const dot = (ok: boolean): JSX.Element =>
-    ok ? (
+    loading ? (
+      <Loader2 size={14} className="conn-dot spin" />
+    ) : ok ? (
       <CircleCheck size={14} className="conn-dot ok" />
     ) : (
       <Circle size={14} className="conn-dot off" />
@@ -226,7 +283,11 @@ function ConnectionsTab(p: {
       <section className="conn-section">
         <div className="conn-title">{dot(!!status?.anthropic)} Anthropic API key</div>
         <div className="conn-detail">
-          {status?.anthropic ? 'Key is set.' : 'No key — paste one to enable the cloud model.'}
+          {loading
+            ? 'Checking…'
+            : status?.anthropic
+              ? 'Key is set.'
+              : 'No key — paste one to enable the cloud model.'}
         </div>
         <div className="conn-row">
           <input
@@ -271,18 +332,22 @@ function ConnectionsTab(p: {
       <section className="conn-section">
         <div className="conn-title">{dot(!!status?.github.connected)} GitHub</div>
         <div className="conn-detail">
-          {status?.github.connected
-            ? `Connected as ${status.github.user}. Worker agents open PRs through this.`
-            : 'Not connected. Run gh auth login in the terminal (type "! gh auth login").'}
+          {loading
+            ? 'Checking…'
+            : status?.github.connected
+              ? `Connected as ${status.github.user}. Worker agents open PRs through this.`
+              : 'Not connected. Run gh auth login in the terminal (type "! gh auth login").'}
         </div>
       </section>
 
       <section className="conn-section">
         <div className="conn-title">{dot(!!status?.ga.configured)} Google Analytics</div>
         <div className="conn-detail">
-          {status?.ga.configured
-            ? 'Service account configured. Set a GA4 property id per project for the morning review.'
-            : 'Add a GA4 service-account JSON key (granted Viewer on your properties).'}
+          {loading
+            ? 'Checking…'
+            : status?.ga.configured
+              ? 'Service account configured. Add GA4 property ids per project (a monorepo can have several) for the morning review.'
+              : 'Add a GA4 service-account JSON key (granted Viewer on your properties).'}
         </div>
         <div className="conn-row">
           <button
@@ -316,17 +381,7 @@ function ConnectionsTab(p: {
         {status?.ga.configured && (
           <div className="conn-ga-props">
             {p.projects.map((proj) => (
-              <div className="conn-ga-row" key={proj.id}>
-                <span className="conn-ga-name">{proj.name}</span>
-                <input
-                  className="ollama-field"
-                  style={{ width: 150 }}
-                  placeholder="GA4 property id"
-                  defaultValue={proj.gaProperty ?? ''}
-                  onBlur={(e) => p.onSetGaProperty(proj.path, e.target.value.trim())}
-                  spellCheck={false}
-                />
-              </div>
+              <GaProjectEditor key={proj.id} project={proj} onSet={p.onSetGaProps} />
             ))}
           </div>
         )}

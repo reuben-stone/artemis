@@ -8,7 +8,7 @@ import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
 import { SettingsModal } from './components/SettingsModal'
 import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X } from 'lucide-react'
-import type { Project, PrReview } from '../../preload'
+import type { Project, PrReview, GaProp } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
@@ -200,8 +200,8 @@ export default function App() {
     setShowSettings(true)
   }, [])
 
-  const setGaProperty = useCallback(async (path: string, propertyId: string) => {
-    const updated = await window.artemis?.projects?.setGaProperty(path, propertyId)
+  const setGaProps = useCallback(async (path: string, props: GaProp[]) => {
+    const updated = await window.artemis?.projects?.setGaProps(path, props)
     if (updated) setProjects(updated)
   }, [])
 
@@ -656,7 +656,7 @@ export default function App() {
           showTerminal={showTerminal}
           onToggleTerminal={toggleTerminal}
           projects={projects}
-          onSetGaProperty={setGaProperty}
+          onSetGaProps={setGaProps}
           onClose={() => setShowSettings(false)}
         />
       )}

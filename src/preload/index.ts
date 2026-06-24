@@ -9,7 +9,12 @@ export interface Project {
   dirty: boolean
   active: boolean
   gh: { slug: string; url: string } | null
-  gaProperty: string | null
+  gaProps: GaProp[]
+}
+
+export interface GaProp {
+  label: string
+  id: string
 }
 
 export interface ConnectionsStatus {
@@ -87,8 +92,8 @@ const api = {
     add: (): Promise<Project[]> => ipcRenderer.invoke('projects:add'),
     remove: (id: number): Promise<Project[]> => ipcRenderer.invoke('projects:remove', id),
     setActive: (path: string): Promise<Project[]> => ipcRenderer.invoke('projects:setActive', path),
-    setGaProperty: (path: string, propertyId: string): Promise<Project[]> =>
-      ipcRenderer.invoke('projects:setGaProperty', { path, propertyId })
+    setGaProps: (path: string, props: GaProp[]): Promise<Project[]> =>
+      ipcRenderer.invoke('projects:setGaProps', { path, props })
   },
   // Connections / onboarding — status + setup for each integration.
   connections: {

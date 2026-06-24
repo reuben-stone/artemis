@@ -52,6 +52,13 @@ html, body, #root {
    spacer, gaps, brand and status remain grab-to-drag handles. */
 .titlebar-right { display: flex; align-items: center; gap: 10px; flex: 1; }
 .titlebar-spacer { flex: 1; -webkit-app-region: drag; }
+/* uniform height so every control sits on the same vertical line */
+.titlebar-right > button,
+.titlebar-right > .status {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+}
 .project-switch,
 .new-convo,
 .pr-queue-btn,
@@ -424,9 +431,56 @@ html, body, #root {
   cursor: pointer;
 }
 .conn-clear:hover { color: #ff4d5e; border-color: #ff4d5e55; }
-.conn-ga-props { margin: 12px 0 0 18px; display: flex; flex-direction: column; gap: 8px; }
-.conn-ga-row { display: flex; align-items: center; gap: 10px; }
-.conn-ga-name { font-size: 12px; color: var(--text); min-width: 130px; }
+.conn-ga-props { margin: 12px 0 0 18px; display: flex; flex-direction: column; gap: 6px; }
+.conn-ga-project { padding: 8px 0; border-top: 1px solid var(--border); }
+.conn-ga-project:first-child { border-top: none; }
+.conn-ga-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.conn-ga-name { font-size: 12px; color: var(--text); font-weight: 600; }
+.conn-ga-add {
+  font-size: 11px;
+  color: #3aa0ff;
+  background: rgba(58, 160, 255, 0.08);
+  border: 1px solid rgba(58, 160, 255, 0.35);
+  border-radius: 999px;
+  padding: 4px 12px;
+  margin-top: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.conn-ga-add:hover { background: rgba(58, 160, 255, 0.18); }
+/* remove-row button in the GA editor */
+.conn-ga-row .conn-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  width: 26px;
+  height: 26px;
+}
+/* loading spinner for connection status checks */
+.conn-dot.spin { color: var(--muted); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Modal scrollbars — purple-tinted to match the panel */
+.settings-body::-webkit-scrollbar,
+.projects-list::-webkit-scrollbar {
+  width: 8px;
+}
+.settings-body::-webkit-scrollbar-track,
+.projects-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.settings-body::-webkit-scrollbar-thumb,
+.projects-list::-webkit-scrollbar-thumb {
+  background: rgba(155, 107, 255, 0.22);
+  border-radius: 8px;
+}
+.settings-body::-webkit-scrollbar-thumb:hover,
+.projects-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 107, 255, 0.4);
+}
 
 /* --- Settings modal --- */
 /* Stable height so switching tabs doesn't make the modal jump; content scrolls. */
@@ -518,6 +572,10 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   background: #080a12;
+  /* separator lives here so it only shows when the terminal is above the chat —
+     when the terminal is hidden, the chat sits flush under the titlebar (no
+     doubled border). */
+  border-bottom: 1px solid var(--border);
   min-height: 0;
   min-width: 0;
 }
@@ -525,7 +583,6 @@ html, body, #root {
   flex: 1 1 50%;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--border);
   min-height: 0;
   min-width: 0;
 }
