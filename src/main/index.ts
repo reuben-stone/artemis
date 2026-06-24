@@ -5,7 +5,8 @@ import { existsSync, readFileSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent, getResyncTurn, resetSession, undoSession, invalidateSystemCache, runBriefing } from './agent'
+import { runAgent, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
+import { gatherBriefing } from './briefing'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 import { parseGitRemote } from './github'
 import { hasGaCredentials, setGaCredentials, clearGaCredentials } from './ga'
@@ -31,7 +32,6 @@ import {
   getProjectGaProps,
   setProjectGaProps,
   type GaProp,
-  getBriefingLatest,
   listPrReviews,
   setPrReviewed,
   clearReviewedPrs
@@ -315,9 +315,8 @@ ipcMain.handle('connections:clearGaCredentials', async () => {
   return { configured: false }
 })
 
-// --- Briefing (on-command, read-only → shown in the docked card) ---
-ipcMain.handle('briefing:run', () => runBriefing())
-ipcMain.handle('briefing:latest', () => getBriefingLatest())
+// --- Briefing (on-command, structured data → docked card) ---
+ipcMain.handle('briefing:data', () => gatherBriefing())
 
 // --- PR Review Queue IPC (worker-agent output, human approval) ---
 ipcMain.handle('prReviews:list', () => listPrReviews())

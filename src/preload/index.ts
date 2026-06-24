@@ -17,6 +17,21 @@ export interface GaProp {
   id: string
 }
 
+export interface BriefingProject {
+  name: string
+  branch: string | null
+  dirty: string[]
+  activity7d: number
+  lastCommit: string | null
+  prs: Array<{ number: number; title: string; agent: boolean }>
+  analytics: Array<{ label: string; users: number; newUsers: number; sessions: number; views: number }>
+}
+
+export interface BriefingData {
+  generatedAt: number
+  projects: BriefingProject[]
+}
+
 export interface ConnectionsStatus {
   anthropic: boolean
   github: { connected: boolean; user: string | null }
@@ -103,10 +118,9 @@ const api = {
     clearGaCredentials: (): Promise<{ configured: boolean }> =>
       ipcRenderer.invoke('connections:clearGaCredentials')
   },
-  // On-command briefing — generate (read-only) and recall the latest for the card.
+  // On-command briefing — gather structured ecosystem data for the card.
   briefing: {
-    run: (): Promise<{ text: string; at: number }> => ipcRenderer.invoke('briefing:run'),
-    latest: (): Promise<{ text: string; at: number } | null> => ipcRenderer.invoke('briefing:latest')
+    data: (): Promise<BriefingData> => ipcRenderer.invoke('briefing:data')
   },
   // PR Review Queue — worker-agent PRs awaiting the human's approval.
   prReviews: {

@@ -630,6 +630,44 @@ html, body, #root {
 .dock-card-body::-webkit-scrollbar-thumb { background: rgba(155, 107, 255, 0.22); border-radius: 8px; }
 .spin { animation: spin 0.8s linear infinite; }
 
+/* briefing card — structured, scannable */
+.brief-proj { padding: 10px 0; border-top: 1px solid var(--border); }
+.brief-proj:first-child { border-top: none; padding-top: 2px; }
+.brief-proj-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.brief-proj-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.brief-proj-meta { font-family: Menlo, monospace; font-size: 10.5px; color: var(--muted); }
+.brief-analytics { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; }
+.brief-stat { display: flex; align-items: baseline; gap: 8px; }
+.brief-stat-label { font-size: 11px; font-weight: 600; color: #3aa0ff; min-width: 72px; }
+.brief-stat-vals { font-size: 11.5px; color: var(--text); }
+.brief-toggle {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.brief-toggle:hover { color: var(--text); }
+.brief-detail { margin: 4px 0 0 14px; display: flex; flex-direction: column; gap: 3px; }
+.brief-pr { font-size: 11.5px; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.brief-agent {
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #27e0a8;
+  border: 1px solid #27e0a855;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.brief-dirty-group { margin-top: 4px; }
+.brief-dirty-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.brief-dirty { font-family: Menlo, monospace; font-size: 10.5px; color: var(--muted); }
+
 /* right: terminal stacked over chat.
    min-width:0 is essential at every link in this chain — a grid/flex item
    defaults to min-width:auto and won't shrink below its content's intrinsic

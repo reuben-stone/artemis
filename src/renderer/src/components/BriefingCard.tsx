@@ -1,34 +1,34 @@
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkBreaks from 'remark-breaks'
-import { X, RefreshCw, Loader2, Sunrise } from 'lucide-react'
+import { useState } from 'react'
+import { X, RefreshCw, Loader2, Sunrise, ChevronDown, ChevronRight } from 'lucide-react'
+import type { BriefingData } from '../../../preload'
 
 /**
- * A dismissable docked card (lives in the orb-window dock) showing the latest
- * on-command briefing — a cross-repo ecosystem + analytics review. First of a set
- * of ambient cards that surface here.
+ * Dismissable docked briefing card — a clean, scannable cross-repo summary. Per
+ * project: a one-line header + prominent analytics, with PRs/uncommitted tucked into
+ * an accordion. Structured (not LLM markdown) so it stays tidy.
  */
 export function BriefingCard({
-  text,
-  at,
+  data,
   loading,
   onRefresh,
   onClose
 }: {
-  text: string
-  at: number | null
+  data: BriefingData | null
   loading: boolean
   onRefresh: () => void
   onClose: () => void
 }): JSX.Element {
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const toggle = (k: string): void => setOpen((o) => ({ ...o, [k]: !o[k] }))
+
   return (
     <div className="dock-card">
       <div className="dock-card-head">
         <span className="dock-card-title">
-          <Sunrise size={14} /> Briefing{at ? ` · ${timeAgo(at)}` : ''}
+          <Sunrise size={14} /> Briefing{data ? ` · ${timeAgo(data.generatedAt)}` : ''}
         </span>
         <div className="dock-card-actions">
-          <button onClick={onRefresh} title="Regenerate" disabled={loading}>
+          <button onClick={onRefresh} disabled={loading} title="Refresh">
             {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
           </button>
           <button onClick={onClose} title="Dismiss">
@@ -36,21 +36,81 @@ export function BriefingCard({
           </button>
         </div>
       </div>
+
       <div className="dock-card-body">
-        {loading && !text ? (
+        {loading && !data ? (
           <div className="dock-loading">
-            <Loader2 size={16} className="spin" /> Generating your briefing…
+            <Loader2 size={16} className="spin" /> Gathering your briefing…
           </div>
+        ) : !data || data.projects.length === 0 ? (
+          <div className="dock-loading">No projects to brief — add repos in Projects.</div>
         ) : (
-          <div className="md">
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-              {text || 'No briefing yet — hit regenerate.'}
-            </ReactMarkdown>
-          </div>
+          data.projects.map((p) => {
+            const detail = p.prs.length + p.dirty.length
+            const isOpen = open[p.name]
+            return (
+              <div className="brief-proj" key={p.name}>
+                <div className="brief-proj-head">
+                  <span className="brief-proj-name">{p.name}</span>
+                  <span className="brief-proj-meta">
+                    {p.branch}
+                    {p.activity7d ? ` · ${p.activity7d} commits/7d` : ''}
+                  </span>
+                </div>
+
+                {p.analytics.length > 0 && (
+                  <div className="brief-analytics">
+                    {p.analytics.map((a) => (
+                      <div className="brief-stat" key={a.label}>
+                        <span className="brief-stat-label">{a.label}</span>
+                        <span className="brief-stat-vals">
+                          {fmt(a.users)} users · {fmt(a.sessions)} sessions · {fmt(a.views)} views
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {detail > 0 && (
+                  <button className="brief-toggle" onClick={() => toggle(p.name)}>
+                    {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {p.prs.length} open PR{p.prs.length !== 1 ? 's' : ''}
+                    {p.dirty.length ? ` · ${p.dirty.length} uncommitted` : ''}
+                  </button>
+                )}
+
+                {isOpen && (
+                  <div className="brief-detail">
+                    {p.prs.map((pr) => (
+                      <div className="brief-pr" key={pr.number}>
+                        #{pr.number} {pr.title}
+                        {pr.agent && <span className="brief-agent">agent</span>}
+                      </div>
+                    ))}
+                    {p.dirty.length > 0 && (
+                      <div className="brief-dirty-group">
+                        <span className="brief-dirty-label">Uncommitted</span>
+                        {p.dirty.slice(0, 8).map((f) => (
+                          <div className="brief-dirty" key={f}>
+                            {f}
+                          </div>
+                        ))}
+                        {p.dirty.length > 8 && <div className="brief-dirty">+{p.dirty.length - 8} more</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })
         )}
       </div>
     </div>
   )
+}
+
+function fmt(n: number): string {
+  return n.toLocaleString('en-US')
 }
 
 function timeAgo(ts: number): string {
@@ -58,7 +118,5 @@ function timeAgo(ts: number): string {
   if (s < 60) return 'just now'
   const m = Math.round(s / 60)
   if (m < 60) return `${m}m ago`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.round(h / 24)}d ago`
+  return `${Math.round(m / 60)}h ago`
 }
