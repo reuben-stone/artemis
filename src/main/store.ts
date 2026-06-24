@@ -37,14 +37,33 @@ export interface StoredTurn {
 const TERMINAL_CAP_BYTES = 256 * 1024 // rolling scrollback ceiling
 const TURN_HISTORY = 20 // keep only the most recent turns for recovery
 
-let db: Database.Database | null = null
+// Minimal driver interface shared by better-sqlite3 (prod) and node:sqlite (tests).
+// Both expose exec() + prepare().{get,all,run}; run() returns {changes,lastInsertRowid}.
+export interface DbLike {
+  exec(sql: string): unknown
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown
+    all(...params: unknown[]): unknown[]
+    run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint }
+  }
+}
 
-function getDb(): Database.Database {
+let db: DbLike | null = null
+let openDb: (file: string) => DbLike = (file) => new Database(file) as unknown as DbLike
+
+// Test seam: swap the driver (e.g. an in-memory node:sqlite) and reset the cache.
+// Also the daemon prerequisite — the DB is no longer hard-wired to a single opener.
+export function __setDbOpener(opener: (file: string) => DbLike): void {
+  openDb = opener
+  db = null
+}
+
+function getDb(): DbLike {
   if (db) return db
   const file = join(app.getPath('userData'), 'artemis.db')
-  db = new Database(file)
-  db.pragma('journal_mode = WAL')
-  db.pragma('synchronous = NORMAL')
+  db = openDb(file)
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('PRAGMA synchronous = NORMAL')
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -383,22 +402,14 @@ export function loadRecentMessages(limit = 200): StoredMessage[] {
 /** Upsert the live turn so a mid-answer restart can recover it. */
 export function saveTurn(t: StoredTurn): void {
   const d = getDb()
+  // Positional params (not named) so this works on both better-sqlite3 and node:sqlite.
   d.prepare(
     `INSERT INTO turns (request_id, text, done, speech, error, state, claimed, created_at)
-     VALUES (@requestId, @text, @done, @speech, @error, @state, @claimed, @createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(request_id) DO UPDATE SET
        text=excluded.text, done=excluded.done, speech=excluded.speech,
        error=excluded.error, state=excluded.state, claimed=excluded.claimed`
-  ).run({
-    requestId: t.requestId,
-    text: t.text,
-    done: t.done,
-    speech: t.speech,
-    error: t.error,
-    state: t.state,
-    claimed: t.claimed ? 1 : 0,
-    createdAt: Date.now()
-  })
+  ).run(t.requestId, t.text, t.done, t.speech, t.error, t.state, t.claimed ? 1 : 0, Date.now())
   // keep the table tiny — recovery only ever needs the latest turn
   d.prepare(
     `DELETE FROM turns WHERE request_id NOT IN (

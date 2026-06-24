@@ -15,6 +15,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['test/**/*.test.ts']
+    include: ['test/**/*.test.ts'],
+    // node:sqlite is a newer builtin Vite doesn't auto-externalize; keep it external.
+    server: { deps: { external: ['node:sqlite', /node:sqlite/] } }
   }
 })
