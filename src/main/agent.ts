@@ -5,7 +5,7 @@ import { promises as fs } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { glob } from 'glob'
-import { getModelClient } from './model'
+import { getModelClient, type ModelFinal } from './model'
 import { runWorker } from './worker'
 import { loadMemory, saveMemory } from './memory'
 import {
@@ -792,6 +792,13 @@ interface TurnBuffer {
 const turns = new Map<string, TurnBuffer>()
 let lastTurnId: string | null = null
 
+// Per-turn AbortControllers so the UI (Esc / Stop button) can interrupt an in-flight
+// turn — aborting stops the model stream and the tool loop at the next boundary.
+const abortControllers = new Map<string, AbortController>()
+export function cancelTurn(requestId: string): void {
+  abortControllers.get(requestId)?.abort()
+}
+
 export function getResyncTurn(): TurnBuffer | null {
   if (lastTurnId) {
     const t = turns.get(lastTurnId)
@@ -867,6 +874,11 @@ export async function runAgent(
   lastTurnId = requestId
   saveTurn(turn)
 
+  // Per-turn cancellation: the renderer (Esc / Stop) calls cancelTurn(requestId),
+  // which aborts this controller — halting the model stream and the tool loop.
+  const ac = new AbortController()
+  abortControllers.set(requestId, ac)
+
   let lastPersist = 0
 
   // Keep the in-memory buffer bounded
@@ -904,36 +916,56 @@ export async function runAgent(
 
     let accText = ''
     let turnCost = 0 // summed across every model call this turn (tool loop included)
+    let cancelled = false
 
     // The agentic loop: stream response, execute tool calls, repeat until end_turn.
     while (true) {
+      if (ac.signal.aborted) {
+        cancelled = true
+        break
+      }
       send({ state: 'thinking' })
 
       const turnStream = client.stream({
         system: systemPrompt,
         messages: localMessages,
-        tools: TOOLS
+        tools: TOOLS,
+        signal: ac.signal
       })
 
-      // Stream text tokens to the renderer in real-time
-      for await (const token of turnStream.tokens) {
-        accText += token
-        turn.text = accText
-        send({ token })
-        const now = Date.now()
-        if (now - lastPersist > 700) {
-          lastPersist = now
-          saveTurn(turn)
+      // Stream text tokens to the renderer in real-time. If the turn is cancelled
+      // mid-stream the iterator/finalMessage reject with an abort error — caught here,
+      // where we keep whatever partial text already arrived.
+      let final: ModelFinal
+      try {
+        for await (const token of turnStream.tokens) {
+          accText += token
+          turn.text = accText
+          send({ token })
+          const now = Date.now()
+          if (now - lastPersist > 700) {
+            lastPersist = now
+            saveTurn(turn)
+          }
         }
+        final = await turnStream.final()
+      } catch (streamErr) {
+        if (ac.signal.aborted) {
+          cancelled = true
+          break
+        }
+        throw streamErr
       }
-
-      const final = await turnStream.final()
       turnCost += final.cost ?? 0
 
       // Add the assistant's full response (text + any tool_use blocks) to local context
       localMessages.push({ role: 'assistant', content: final.content })
 
       if (final.stopReason !== 'tool_use') break // done — exit the loop
+      if (ac.signal.aborted) {
+        cancelled = true
+        break
+      }
 
       // Execute tool calls
       send({ state: 'executing' })
@@ -941,6 +973,10 @@ export async function runAgent(
 
       for (const block of final.content) {
         if (block.type !== 'tool_use') continue
+        if (ac.signal.aborted) {
+          cancelled = true
+          break
+        }
 
         const toolInput = block.input as Record<string, unknown>
 
@@ -1005,14 +1041,20 @@ export async function runAgent(
       localMessages.push({ role: 'user', content: toolResults })
     }
 
-    // Turn complete — strip the ⟦say⟧ marker and commit
+    // Turn complete (or cancelled) — strip the ⟦say⟧ marker and commit what we have.
     const { display, speech } = splitSpeech(accText.trim())
-    turn.done = display
-    turn.speech = speech
+    const finalDisplay = cancelled
+      ? display
+        ? `${display}\n\n_⏹ Stopped._`
+        : '_⏹ Stopped._'
+      : display
+    turn.done = finalDisplay
+    turn.speech = cancelled ? '' : speech
     turn.claimed = true
-    appendMessage('assistant', display)
+    appendMessage('assistant', finalDisplay)
     saveTurn(turn)
-    send({ done: display, speech, state: 'idle', cost: turnCost })
+    // On cancel, suppress the spoken line so Artemis doesn't talk after you stopped it.
+    send({ done: finalDisplay, speech: cancelled ? '' : speech, state: 'idle', cost: turnCost })
   } catch (err: unknown) {
     const raw = err instanceof Error ? err.message : String(err)
     const isAuth = /auth|api[_-]?key|401|unauthor|no api key/i.test(raw)
@@ -1023,5 +1065,7 @@ export async function runAgent(
     appendMessage('assistant', `⚠️ ${turn.error}`)
     saveTurn(turn)
     send({ error: turn.error, state: 'error' })
+  } finally {
+    abortControllers.delete(requestId)
   }
 }

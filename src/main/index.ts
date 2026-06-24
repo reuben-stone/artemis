@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
+import { runAgent, cancelTurn, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
 import { gatherBriefing } from './briefing'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 import { parseGitRemote } from './github'
@@ -222,6 +222,9 @@ ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prom
   }
   return runAgent(emit, requestId, prompt, ask)
 })
+
+// Stop an in-flight turn (Esc / Stop button) — aborts the model stream + tool loop.
+ipcMain.on('agent:cancel', (_e, requestId: string) => cancelTurn(requestId))
 
 // After a renderer reload (e.g. a hot-reload of Artemis's own UI) the new page asks
 // the main process whether a turn was in flight, and re-attaches to it.
