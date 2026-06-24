@@ -9,7 +9,7 @@ import { PrReviewQueue } from './components/PrReviewQueue'
 import { SettingsModal } from './components/SettingsModal'
 import { BriefingCard } from './components/BriefingCard'
 import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise } from 'lucide-react'
-import type { Project, PrReview, GaProp } from '../../preload'
+import type { Project, PrReview, GaProp, BriefingData } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
@@ -44,8 +44,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   // On-command briefing, shown in a docked card in the orb area.
   const [showBriefing, setShowBriefing] = useState(false)
-  const [briefingText, setBriefingText] = useState('')
-  const [briefingAt, setBriefingAt] = useState<number | null>(null)
+  const [briefingData, setBriefingData] = useState<BriefingData | null>(null)
   const [briefingLoading, setBriefingLoading] = useState(false)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
@@ -414,24 +413,12 @@ export default function App() {
   // latest closure (which captures the current voiceOn / speak values).
   sendRef.current = send
 
-  // On-command briefing → docked card. Load the last one on boot so reopening is instant.
-  useEffect(() => {
-    window.artemis?.briefing?.latest().then((b) => {
-      if (b) {
-        setBriefingText(b.text)
-        setBriefingAt(b.at)
-      }
-    })
-  }, [])
-
+  // On-command briefing → docked card (structured, gathered fresh).
   const runBriefingNow = useCallback(async () => {
     setBriefingLoading(true)
     try {
-      const r = await window.artemis?.briefing?.run()
-      if (r) {
-        setBriefingText(r.text)
-        setBriefingAt(r.at)
-      }
+      const d = await window.artemis?.briefing?.data()
+      if (d) setBriefingData(d)
     } finally {
       setBriefingLoading(false)
     }
@@ -439,8 +426,8 @@ export default function App() {
 
   const openBriefing = useCallback(() => {
     setShowBriefing(true)
-    if (!briefingText && !briefingLoading) void runBriefingNow()
-  }, [briefingText, briefingLoading, runBriefingNow])
+    if (!briefingData && !briefingLoading) void runBriefingNow()
+  }, [briefingData, briefingLoading, runBriefingNow])
 
   // Voice input (Phase 1 — ears). Capture drives the orb amplitude from your live
   // voice; transcription is a swappable seam (agent/transcribe.ts). On a final
@@ -614,8 +601,7 @@ export default function App() {
           {showBriefing && (
             <div className="orb-dock">
               <BriefingCard
-                text={briefingText}
-                at={briefingAt}
+                data={briefingData}
                 loading={briefingLoading}
                 onRefresh={runBriefingNow}
                 onClose={() => setShowBriefing(false)}

@@ -101,8 +101,15 @@ function fmt(n: number): string {
   return n.toLocaleString('en-US')
 }
 
-/** A compact last-7-days summary for one GA4 property, for the morning review. */
-export async function gaSummary(propertyId: string): Promise<string> {
+export interface GaMetrics {
+  users: number
+  newUsers: number
+  sessions: number
+  views: number
+}
+
+/** Structured last-7-days metrics for one GA4 property. */
+export async function gaMetrics(propertyId: string): Promise<GaMetrics> {
   const token = await getAccessToken()
   const id = propertyId.replace(/^properties\//, '')
   const res = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${id}:runReport`, {
@@ -121,6 +128,11 @@ export async function gaSummary(propertyId: string): Promise<string> {
   if (!res.ok) throw new Error(`GA report error ${res.status}: ${(await res.text()).slice(0, 200)}`)
   const data = (await res.json()) as { rows?: Array<{ metricValues: Array<{ value: string }> }> }
   const v = data.rows?.[0]?.metricValues?.map((m) => Number(m.value) || 0) ?? [0, 0, 0, 0]
-  const [users, newUsers, sessions, views] = v
-  return `GA last 7d — ${fmt(users)} active users (${fmt(newUsers)} new), ${fmt(sessions)} sessions, ${fmt(views)} views`
+  return { users: v[0], newUsers: v[1], sessions: v[2], views: v[3] }
+}
+
+/** A compact last-7-days summary string for one GA4 property (used in ecosystem_status). */
+export async function gaSummary(propertyId: string): Promise<string> {
+  const m = await gaMetrics(propertyId)
+  return `GA last 7d — ${fmt(m.users)} active users (${fmt(m.newUsers)} new), ${fmt(m.sessions)} sessions, ${fmt(m.views)} views`
 }

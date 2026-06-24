@@ -195,20 +195,6 @@ export function setOllamaModel(model: string): void {
   setMeta(OLLAMA_MODEL_KEY, model)
 }
 
-// --- on-command briefing -----------------------------------------------------
-
-// The latest generated briefing (shown in the docked card; survives restart).
-export function getBriefingLatest(): { text: string; at: number } | null {
-  const text = getMeta('briefing_latest_text')
-  if (!text) return null
-  return { text, at: Number(getMeta('briefing_latest_at') ?? '0') }
-}
-
-export function setBriefingLatest(text: string, at: number): void {
-  setMeta('briefing_latest_text', text)
-  setMeta('briefing_latest_at', String(at))
-}
-
 // --- multi-project registry (the ops-layer spine) ----------------------------
 
 // Generic by design: a list of overseen repos (any ecosystem, not just Livana),
