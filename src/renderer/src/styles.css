@@ -216,7 +216,13 @@ html, body, #root {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   z-index: 60;
   -webkit-app-region: no-drag;
-  animation: rowIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  /* Dedicated keyframe: must carry translateX(-50%) through the animation, or the
+     fill-both end state clobbers the centering transform and the toast drifts right. */
+  animation: toastIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 .undo-toast button {
   font-size: 12px;
@@ -886,6 +892,149 @@ html, body, #root {
   z-index: 5;
 }
 .jump-bottom:hover { border-color: #9b6bff66; }
+
+/* tool-call activity timeline (inside assistant bubbles) */
+.tool-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 8px;
+}
+.tool-row {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 9px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.tool-head:hover { background: rgba(255, 255, 255, 0.03); }
+.tool-chev {
+  display: inline-flex;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+.tool-chev.open { transform: rotate(90deg); }
+.tool-chev-gap { display: inline-block; width: 12px; }
+.tool-glyph { display: inline-flex; color: #9b6bff; }
+.tool-name { font-weight: 600; }
+.tool-arg {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.tool-status { display: inline-flex; margin-left: auto; color: var(--muted); }
+.tool-status.running { color: #9b6bff; }
+.tool-status.ok { color: #5ad18b; }
+.tool-status.error { color: #f38ba8; }
+.tool-status.denied { color: #f9a36b; }
+.tool-row.error { border-color: #f38ba840; }
+.tool-row.denied { border-color: #f9a36b40; }
+.tool-body {
+  border-top: 1px solid var(--border);
+  padding: 7px 9px;
+  max-height: 280px;
+  overflow: auto;
+}
+.tool-body pre {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tool-cmd { color: #9b6bff; margin-bottom: 6px !important; }
+.tool-out { color: var(--muted); }
+.tool-diff { display: flex; flex-direction: column; gap: 4px; }
+.tool-diff pre {
+  border-radius: 5px;
+  padding: 5px 7px;
+}
+.diff-del { background: rgba(243, 139, 168, 0.1); color: #f38ba8; }
+.diff-add { background: rgba(90, 209, 139, 0.1); color: #5ad18b; }
+
+/* ⌘K command palette */
+.cmdk-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+  z-index: 60;
+}
+.cmdk {
+  width: 520px;
+  max-width: 92vw;
+  background: #0c0d16;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.cmdk-input {
+  width: 100%;
+  padding: 14px 16px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 15px;
+  outline: none;
+}
+.cmdk-input::placeholder { color: var(--muted); }
+.cmdk-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.cmdk-empty {
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.cmdk-item.active { background: rgba(155, 107, 255, 0.14); }
+.cmdk-icon { display: inline-flex; color: #9b6bff; }
+.cmdk-label { flex: 1; }
+.cmdk-hint {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 /* markdown content inside assistant bubbles */
 .md > :first-child { margin-top: 0; }

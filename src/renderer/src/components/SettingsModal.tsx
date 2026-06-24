@@ -28,6 +28,8 @@ export function SettingsModal(props: {
   onToggleAutoLaunch: () => void
   showTerminal: boolean
   onToggleTerminal: () => void
+  showCost: boolean
+  onToggleShowCost: () => void
   // Connections
   projects: Project[]
   onSetGaProps: (path: string, props: GaProp[]) => void
@@ -188,6 +190,8 @@ function GeneralTab(p: {
   onToggleAutoLaunch: () => void
   showTerminal: boolean
   onToggleTerminal: () => void
+  showCost: boolean
+  onToggleShowCost: () => void
 }): JSX.Element {
   return (
     <section className="conn-section" style={{ borderBottom: 'none' }}>
@@ -199,6 +203,14 @@ function GeneralTab(p: {
         <input type="checkbox" checked={p.showTerminal} onChange={p.onToggleTerminal} />
         Show terminal pane
       </label>
+      <label className="set-toggle">
+        <input type="checkbox" checked={p.showCost} onChange={p.onToggleShowCost} />
+        Show cost estimate in top bar
+      </label>
+      <div className="conn-detail" style={{ marginLeft: 0 }}>
+        A rough running total at Anthropic list prices. Off by default; reads $0 on the
+        local model.
+      </div>
     </section>
   )
 }

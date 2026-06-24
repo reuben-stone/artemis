@@ -759,6 +759,15 @@ export function buildMessages(
 
 // ─── Speechline helpers ────────────────────────────────────────────────────
 
+// Trim a tool's output to a UI-friendly preview for the activity timeline. The model
+// still receives the full (60k-clamped) result; this only bounds what crosses IPC and
+// renders in an expandable row.
+const TOOL_PREVIEW_CAP = 8000
+function toolPreview(output: string): string {
+  if (output.length <= TOOL_PREVIEW_CAP) return output
+  return output.slice(0, TOOL_PREVIEW_CAP) + `\n…[${output.length - TOOL_PREVIEW_CAP} more chars]`
+}
+
 export function splitSpeech(text: string): { display: string; speech: string } {
   const i = text.indexOf(SAY_MARKER)
   if (i === -1) return { display: text, speech: '' }
@@ -894,6 +903,7 @@ export async function runAgent(
     const localMessages: Anthropic.MessageParam[] = buildMessages(history, prompt)
 
     let accText = ''
+    let turnCost = 0 // summed across every model call this turn (tool loop included)
 
     // The agentic loop: stream response, execute tool calls, repeat until end_turn.
     while (true) {
@@ -918,6 +928,7 @@ export async function runAgent(
       }
 
       const final = await turnStream.final()
+      turnCost += final.cost ?? 0
 
       // Add the assistant's full response (text + any tool_use blocks) to local context
       localMessages.push({ role: 'assistant', content: final.content })
@@ -933,6 +944,11 @@ export async function runAgent(
 
         const toolInput = block.input as Record<string, unknown>
 
+        // Surface the call to the chat activity timeline before it runs.
+        send({ tool: { id: block.id, phase: 'start', name: block.name, input: toolInput } })
+        const endTool = (status: 'ok' | 'error' | 'denied', output: string) =>
+          send({ tool: { id: block.id, phase: 'end', status, output: toolPreview(output) } })
+
         // Permission gate
         if (!AUTO_ALLOW.has(block.name)) {
           if (
@@ -940,10 +956,12 @@ export async function runAgent(
             typeof toolInput.command === 'string' &&
             DANGEROUS.test(toolInput.command)
           ) {
+            const content = 'Refused: destructive command blocked by Artemis.'
+            endTool('denied', content)
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
-              content: 'Refused: destructive command blocked by Artemis.',
+              content,
               is_error: true
             })
             continue
@@ -951,6 +969,7 @@ export async function runAgent(
 
           const ok = await askPermission({ toolName: block.name, input: toolInput })
           if (!ok) {
+            endTool('denied', 'Denied by user.')
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
@@ -964,6 +983,7 @@ export async function runAgent(
         // Execute
         try {
           const result = await executeTool(block.name, toolInput)
+          endTool('ok', result)
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -971,6 +991,7 @@ export async function runAgent(
           })
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
+          endTool('error', msg)
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -991,7 +1012,7 @@ export async function runAgent(
     turn.claimed = true
     appendMessage('assistant', display)
     saveTurn(turn)
-    send({ done: display, speech, state: 'idle', cost: 0 })
+    send({ done: display, speech, state: 'idle', cost: turnCost })
   } catch (err: unknown) {
     const raw = err instanceof Error ? err.message : String(err)
     const isAuth = /auth|api[_-]?key|401|unauthor|no api key/i.test(raw)

@@ -3,12 +3,44 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import { Hexagon, ArrowDown, ArrowUp, Volume2, VolumeX, Mic, CircleDot } from 'lucide-react'
+import {
+  Hexagon,
+  ArrowDown,
+  ArrowUp,
+  Volume2,
+  VolumeX,
+  Mic,
+  CircleDot,
+  ChevronRight,
+  Loader2,
+  Check,
+  Ban,
+  AlertTriangle,
+  Terminal,
+  FileText,
+  FilePen,
+  Search,
+  Globe,
+  Brain,
+  Activity,
+  Bot,
+  Wrench
+} from 'lucide-react'
 import type { OrbState } from './Orb'
+
+export interface ToolStep {
+  id: string
+  name: string
+  input?: unknown
+  status: 'running' | 'ok' | 'error' | 'denied'
+  output?: string
+}
 
 export interface Message {
   role: 'user' | 'assistant'
   text: string
+  /** Tool calls made during this assistant turn, shown as an activity timeline. */
+  tools?: ToolStep[]
 }
 
 const STATE_LABEL: Record<OrbState, string> = {
@@ -123,7 +155,9 @@ export default function Chat({
 
   const last = messages[messages.length - 1]
   const streaming = busy && last?.role === 'assistant'
-  const awaiting = streaming && last.text.length === 0
+  // Show the "Thinking" row only before anything to show — once a tool starts (or text
+  // streams), the bubble's timeline/text takes over.
+  const awaiting = streaming && last.text.length === 0 && !last.tools?.length
 
   // Memoize the message bubbles so typing in the textarea (local `draft` state) does
   // NOT re-render the whole transcript through ReactMarkdown — the cause of the typing
@@ -133,20 +167,23 @@ export default function Chat({
       messages.map((m, i) => {
         const isLast = i === messages.length - 1
         const isStreamingBubble = isLast && streaming && m.role === 'assistant'
-        if (isStreamingBubble && m.text.length === 0) return null // shown as thinking row
+        // Only skip the empty streaming bubble when it has no tool activity yet — once a
+        // tool is running we render the bubble to show the timeline.
+        if (isStreamingBubble && m.text.length === 0 && !m.tools?.length) return null
         return (
           <div key={i} className={`row ${m.role}`}>
             <div className="avatar">{m.role === 'user' ? 'You' : <Hexagon size={13} />}</div>
             <div className={`bubble ${m.role}`}>
               {m.role === 'assistant' ? (
                 <div className="md">
+                  {m.tools && m.tools.length > 0 && <ToolTimeline steps={m.tools} />}
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkBreaks]}
                     components={mdComponents}
                   >
                     {m.text}
                   </ReactMarkdown>
-                  {isStreamingBubble && <span className="caret" />}
+                  {isStreamingBubble && m.text.length > 0 && <span className="caret" />}
                 </div>
               ) : (
                 m.text
@@ -248,6 +285,135 @@ export default function Chat({
           {busy && !draft.trim() ? '…' : <ArrowUp size={16} />}
         </button>
       </div>
+    </div>
+  )
+}
+
+/* ---- tool-call activity timeline ---- */
+
+// Map a tool name to a glyph so the timeline scans at a glance.
+function toolIcon(name: string): JSX.Element {
+  switch (name) {
+    case 'Read':
+    case 'recall_memory':
+      return <FileText size={12} />
+    case 'Write':
+    case 'Edit':
+      return <FilePen size={12} />
+    case 'Glob':
+    case 'Grep':
+      return <Search size={12} />
+    case 'Bash':
+      return <Terminal size={12} />
+    case 'WebFetch':
+      return <Globe size={12} />
+    case 'save_memory':
+      return <Brain size={12} />
+    case 'ecosystem_status':
+      return <Activity size={12} />
+    case 'dispatch_worker':
+      return <Bot size={12} />
+    default:
+      return <Wrench size={12} />
+  }
+}
+
+function statusIcon(status: ToolStep['status']): JSX.Element {
+  switch (status) {
+    case 'running':
+      return <Loader2 size={12} className="spin" />
+    case 'error':
+      return <AlertTriangle size={12} />
+    case 'denied':
+      return <Ban size={12} />
+    default:
+      return <Check size={12} />
+  }
+}
+
+const tail = (p?: string): string => (p ? p.split('/').slice(-2).join('/') : '')
+
+// A one-line summary of what the call is acting on (path / pattern / command…).
+function argSummary(name: string, input: unknown): string {
+  const i = (input ?? {}) as Record<string, unknown>
+  const s = (v: unknown): string => (typeof v === 'string' ? v : '')
+  switch (name) {
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+      return tail(s(i.file_path))
+    case 'Glob':
+    case 'Grep':
+      return s(i.pattern)
+    case 'Bash':
+      return s(i.description) || s(i.command)
+    case 'WebFetch':
+      return s(i.url)
+    case 'save_memory':
+      return s(i.name)
+    case 'dispatch_worker':
+      return s(i.project) ? `${s(i.project)} — ${s(i.task)}` : s(i.task)
+    default:
+      return ''
+  }
+}
+
+function ToolTimeline({ steps }: { steps: ToolStep[] }): JSX.Element {
+  return (
+    <div className="tool-timeline">
+      {steps.map((s) => (
+        <ToolRow key={s.id} step={s} />
+      ))}
+    </div>
+  )
+}
+
+function ToolRow({ step }: { step: ToolStep }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const summary = argSummary(step.name, step.input)
+  const hasBody = !!(step.output || (step.input && Object.keys(step.input as object).length))
+  return (
+    <div className={`tool-row ${step.status}`}>
+      <button className="tool-head" onClick={() => hasBody && setOpen((o) => !o)}>
+        <span className={`tool-chev ${open ? 'open' : ''}`}>
+          {hasBody ? <ChevronRight size={12} /> : <span className="tool-chev-gap" />}
+        </span>
+        <span className="tool-glyph">{toolIcon(step.name)}</span>
+        <span className="tool-name">{step.name}</span>
+        {summary && <span className="tool-arg">{summary}</span>}
+        <span className={`tool-status ${step.status}`}>{statusIcon(step.status)}</span>
+      </button>
+      {open && hasBody && <ToolBody step={step} />}
+    </div>
+  )
+}
+
+function ToolBody({ step }: { step: ToolStep }): JSX.Element {
+  const input = (step.input ?? {}) as Record<string, unknown>
+  // Edits render as a red/green diff of the exact swap.
+  if (step.name === 'Edit' && typeof input.old_string === 'string') {
+    return (
+      <div className="tool-body">
+        <div className="tool-diff">
+          <pre className="diff-del">{input.old_string as string}</pre>
+          <pre className="diff-add">{String(input.new_string ?? '')}</pre>
+        </div>
+      </div>
+    )
+  }
+  if (step.name === 'Write' && typeof input.content === 'string') {
+    return (
+      <div className="tool-body">
+        <pre className="tool-out">{(input.content as string).slice(0, 2000)}</pre>
+      </div>
+    )
+  }
+  return (
+    <div className="tool-body">
+      {step.name === 'Bash' && typeof input.command === 'string' && (
+        <pre className="tool-cmd">$ {input.command}</pre>
+      )}
+      {step.output && <pre className="tool-out">{step.output}</pre>}
     </div>
   )
 }
