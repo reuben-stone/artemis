@@ -17,6 +17,7 @@ import {
   undoNewConversation,
   getActiveProjectPath,
   getActiveProject,
+  listProjects,
   type StoredTurn
 } from './store'
 
@@ -30,7 +31,27 @@ const SAY_MARKER = '⟦say⟧'
 export const DANGEROUS = /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot|>\s*\/dev\/sd)/i
 
 // Tools that need no permission prompt (read-only + our own memory ops).
-export const AUTO_ALLOW = new Set(['Read', 'Glob', 'Grep', 'save_memory', 'recall_memory', 'WebFetch'])
+export const AUTO_ALLOW = new Set([
+  'Read',
+  'Glob',
+  'Grep',
+  'save_memory',
+  'recall_memory',
+  'WebFetch',
+  'ecosystem_status'
+])
+
+// Hard ceiling on any single tool result fed back to the model (~tens of thousands of
+// tokens). A runaway Read/Grep/Bash on a real repo could otherwise exceed the context
+// window in one shot (e.g. globbing node_modules → millions of tokens).
+const MAX_TOOL_OUTPUT = 60_000
+export function clampToolOutput(s: string): string {
+  if (s.length <= MAX_TOOL_OUTPUT) return s
+  return (
+    s.slice(0, MAX_TOOL_OUTPUT) +
+    `\n\n…[truncated ${s.length - MAX_TOOL_OUTPUT} chars to protect the context window — narrow your query]`
+  )
+}
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
 // which project is active.
@@ -118,20 +139,28 @@ async function buildSystemPrompt(): Promise<string> {
   )
 
   try {
-    const active = getActiveProject()
-    if (active) {
+    const projects = listProjects()
+    if (projects.length) {
+      const active = getActiveProject()
+      const list = projects
+        .map((p) => `- ${p.name}${active && p.path === active.path ? ' (active)' : ''} — ${p.path}`)
+        .join('\n')
       parts.push(
         [
-          `ACTIVE PROJECT — you are currently operating on "${active.name}" at ${active.path}.`,
-          'Bash, Glob, and Grep default to this directory; use absolute paths under it for',
-          'Read/Write/Edit.',
-          active.remote ? `Its GitHub remote is ${active.remote}.` : '',
-          'This is one of several projects you oversee — the user can switch the active project,',
-          'so confirm which repo you are in before acting if it matters. Your OWN source repo',
-          `(${repoRoot()}) is a separate project; editing it restarts you.`
+          `PROJECTS YOU OVERSEE — you have ${projects.length} registered project(s):`,
+          list,
+          '',
+          'You are aware of ALL of them at once for generalized advice and overviews. Your file',
+          'tools (Bash, Glob, Grep) act in the ACTIVE project; use absolute paths for',
+          'Read/Write/Edit. For a cross-repo overview (e.g. a morning review) call the',
+          '`ecosystem_status` tool — do NOT switch the active project just to summarize.',
+          active
+            ? `Active project: "${active.name}" at ${active.path}.${active.remote ? ` Remote: ${active.remote}.` : ''}`
+            : '',
+          `Your OWN source repo (${repoRoot()}) is one of these projects; editing it restarts you, the others do not.`
         ]
           .filter(Boolean)
-          .join(' ')
+          .join('\n')
       )
     }
   } catch {
@@ -315,6 +344,16 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {},
       required: []
     }
+  },
+  {
+    name: 'ecosystem_status',
+    description:
+      'Cross-repo overview of ALL registered projects at once — for each: branch, uncommitted change count, last commit, and ahead/behind vs upstream. Use for morning reviews and generalized ecosystem summaries WITHOUT switching the active project. Read-only (git status only).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: []
+    }
   }
 ]
 
@@ -362,9 +401,27 @@ async function toolEdit(input: {
   return `Edited ${input.file_path}`
 }
 
+const GLOB_CAP = 500 // never return more than this many paths — protects the context window
+
 async function toolGlob(input: { pattern: string; path?: string }): Promise<string> {
   const cwd = input.path ? resolve(input.path) : activeProjectRoot()
-  const files = await glob(input.pattern, { cwd, absolute: true, nodir: true })
+  const files = await glob(input.pattern, {
+    cwd,
+    absolute: true,
+    nodir: true,
+    // Skip heavy/vendored dirs — a `**/*` over a repo with node_modules would
+    // otherwise return hundreds of thousands of paths and blow the context window.
+    ignore: [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.next/**',
+      '**/out/**',
+      '**/.svelte-kit/**',
+      '**/.turbo/**'
+    ]
+  })
   // Sort by modification time (newest first)
   const stats = await Promise.all(
     files.map(async (f) => {
@@ -377,7 +434,15 @@ async function toolGlob(input: { pattern: string; path?: string }): Promise<stri
     })
   )
   stats.sort((a, b) => b.mtime - a.mtime)
-  return stats.map((s) => s.f).join('\n') || '(no matches)'
+  if (!stats.length) return '(no matches)'
+  const paths = stats.map((s) => s.f)
+  if (paths.length > GLOB_CAP) {
+    return (
+      paths.slice(0, GLOB_CAP).join('\n') +
+      `\n\n…[${paths.length - GLOB_CAP} more matches omitted — narrow the pattern]`
+    )
+  }
+  return paths.join('\n')
 }
 
 async function toolGrep(input: {
@@ -510,6 +575,36 @@ async function toolRecallMemory(): Promise<string> {
     : 'No memories saved yet.'
 }
 
+/** Cross-repo git overview of every registered project — the morning-review data. */
+async function toolEcosystemStatus(): Promise<string> {
+  const projects = listProjects()
+  if (!projects.length) return 'No projects registered yet.'
+  const activePath = activeProjectRoot()
+
+  const rows = await Promise.all(
+    projects.map(async (p) => {
+      const run = async (cmd: string): Promise<string> => {
+        try {
+          return (await execAsync(cmd, { cwd: p.path, timeout: 10_000 })).stdout.trim()
+        } catch {
+          return ''
+        }
+      }
+      const branch = (await run('git rev-parse --abbrev-ref HEAD')) || '(no git)'
+      const status = await run('git status --porcelain')
+      const dirty = status ? status.split('\n').length : 0
+      const last = (await run('git log -1 --pretty=format:%h %s (%cr)')) || '(no commits)'
+      const ahead = (await run('git rev-list --count @{u}..HEAD')) || '0'
+      const behind = (await run('git rev-list --count HEAD..@{u}')) || '0'
+      const sync = ahead !== '0' || behind !== '0' ? ` [↑${ahead} ↓${behind}]` : ''
+      const star = p.path === activePath ? ' ←active' : ''
+      return `• ${p.name}${star} — ${branch}${sync}, ${dirty} uncommitted file(s)\n    last: ${last}\n    ${p.path}`
+    })
+  )
+
+  return `Ecosystem status — ${projects.length} project(s):\n\n${rows.join('\n\n')}`
+}
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   switch (name) {
     case 'Read':
@@ -530,6 +625,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       return toolSaveMemory(input as Parameters<typeof toolSaveMemory>[0])
     case 'recall_memory':
       return toolRecallMemory()
+    case 'ecosystem_status':
+      return toolEcosystemStatus()
     default:
       throw new Error(`Unknown tool: ${name}`)
   }
@@ -772,7 +869,7 @@ export async function runAgent(
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
-            content: result
+            content: clampToolOutput(result)
           })
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
