@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { X, CircleCheck, Circle, Plus, Loader2 } from 'lucide-react'
 import type { Project, ConnectionsStatus, GaProp } from '../../../preload'
+import { ACCENTS, applyAccent, currentAccentId } from '../theme'
 
 type Tab = 'model' | 'voice' | 'connections' | 'general'
 
@@ -103,6 +104,8 @@ function ModelTab(p: {
       </div>
       <div className="conn-detail" style={{ marginLeft: 0 }}>
         Sonnet is fast &amp; cheap (default); Opus is max capability. Cloud only.
+        <br />
+        Takes effect on your next message — no restart needed.
       </div>
 
       <div className="set-field" style={{ marginTop: 16 }}>
@@ -211,7 +214,35 @@ function GeneralTab(p: {
         A rough running total at Anthropic list prices. Off by default; reads $0 on the
         local model.
       </div>
+
+      <div className="set-field" style={{ marginTop: 18 }}>
+        <span className="set-label">Accent</span>
+        <AccentPicker />
+      </div>
+      <div className="conn-detail" style={{ marginLeft: 0 }}>
+        The highlight colour across the interface. Applies instantly.
+      </div>
     </section>
+  )
+}
+
+function AccentPicker(): JSX.Element {
+  const [sel, setSel] = useState(currentAccentId())
+  return (
+    <div className="accent-swatches">
+      {ACCENTS.map((a) => (
+        <button
+          key={a.id}
+          className={`accent-swatch ${sel === a.id ? 'on' : ''}`}
+          style={{ background: a.hex }}
+          title={a.name}
+          onClick={() => {
+            applyAccent(a)
+            setSel(a.id)
+          }}
+        />
+      ))}
+    </div>
   )
 }
 
