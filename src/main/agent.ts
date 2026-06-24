@@ -24,6 +24,7 @@ import {
   type StoredTurn
 } from './store'
 import { gaSummary, hasGaCredentials } from './ga'
+import { parseGitRemote } from './github'
 
 const execAsync = promisify(exec)
 
@@ -655,6 +656,26 @@ async function toolEcosystemStatus(): Promise<string> {
         const shown = files.slice(0, 6).join(', ')
         lines.push(`    changed: ${shown}${files.length > 6 ? ` (+${files.length - 6} more)` : ''}`)
       }
+      // Open PRs (incl. agent-created `artemis/…` branches) — current in-flight work.
+      const gh = parseGitRemote(p.remote)
+      if (gh) {
+        const prJson = await run(
+          `gh pr list --repo ${gh.slug} --state open --json number,title,headRefName --limit 10`
+        )
+        try {
+          const prs = prJson ? (JSON.parse(prJson) as Array<{ number: number; title: string; headRefName: string }>) : []
+          if (prs.length) {
+            const list = prs
+              .slice(0, 4)
+              .map((pr) => `#${pr.number} ${pr.title}${pr.headRefName?.startsWith('artemis/') ? ' (agent)' : ''}`)
+              .join('; ')
+            lines.push(`    open PRs: ${prs.length} — ${list}${prs.length > 4 ? ' …' : ''}`)
+          }
+        } catch {
+          /* gh unavailable or no access — skip */
+        }
+      }
+
       // Live analytics for each GA4 property configured on this project (read-only).
       // A monorepo can have several (e.g. Lumi + LumiLens), so loop and label each.
       const gaProps = getProjectGaProps(p.path)
@@ -815,7 +836,7 @@ export interface PermissionAsker {
 // ─── Proactive briefing (read-only, rendered in the docked card) ─────────────
 
 const BRIEFING_PROMPT =
-  'Produce my briefing: a concise cross-repo ecosystem status with the latest analytics for each project (use ecosystem_status), and call out anything that needs my attention. Markdown, scannable. No ⟦say⟧ line needed.'
+  'Produce my briefing using ecosystem_status: a concise cross-repo overview covering, per project — current/in-flight work (uncommitted files, recent activity), open PRs including agent-created ones awaiting review, and the latest analytics. Then call out anything that needs my attention. Markdown, scannable. No ⟦say⟧ line needed.'
 
 /**
  * Run a self-contained, READ-ONLY briefing turn and return the markdown. It does not
