@@ -5,16 +5,20 @@ import { promises as fs } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { glob } from 'glob'
-import { getApiKey } from './secrets'
+import { getModelClient } from './model'
+import { runWorker } from './worker'
 import { loadMemory, saveMemory } from './memory'
 import {
-  getModel,
   loadRecentMessages,
   appendMessage,
   saveTurn,
   loadLastTurn,
   markTurnClaimed,
   startNewConversation,
+  undoNewConversation,
+  getActiveProjectPath,
+  getActiveProject,
+  listProjects,
   type StoredTurn
 } from './store'
 
@@ -24,14 +28,32 @@ const execAsync = promisify(exec)
 // from the on-screen transcript. Kept in sync with renderer/agent/speech.ts.
 const SAY_MARKER = '⟦say⟧'
 
-// Patterns we refuse without asking the user.
-const DANGEROUS = /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot|>\s*\/dev\/sd)/i
+// Shared safety primitives (also used by the worker loop). Imported for internal use
+// and re-exported so existing importers/tests that reference them via agent.ts work.
+import { DANGEROUS, clampToolOutput } from './safety'
+export { DANGEROUS, clampToolOutput }
 
 // Tools that need no permission prompt (read-only + our own memory ops).
-const AUTO_ALLOW = new Set(['Read', 'Glob', 'Grep', 'save_memory', 'recall_memory', 'WebFetch'])
+export const AUTO_ALLOW = new Set([
+  'Read',
+  'Glob',
+  'Grep',
+  'save_memory',
+  'recall_memory',
+  'WebFetch',
+  'ecosystem_status'
+])
 
+// Artemis's OWN repo — identity docs, self-model, memory live here regardless of
+// which project is active.
 function repoRoot(): string {
   return app.getAppPath()
+}
+
+// The ACTIVE project's working dir — where file tools (Bash/Glob/Grep) operate.
+// Defaults to Artemis's own repo when no other project is selected.
+function activeProjectRoot(): string {
+  return getActiveProjectPath()
 }
 
 // ─── System prompt cache ───────────────────────────────────────────────────
@@ -53,6 +75,14 @@ async function buildSystemPrompt(): Promise<string> {
     parts.push(await fs.readFile(join(repoRoot(), 'ARTEMIS.md'), 'utf8'))
   } catch {
     parts.push('Your name is Artemis. You are a Claude-based operator.')
+  }
+
+  // Durable self-model — keeps Artemis accurate about how it's actually built, so it
+  // stops hallucinating about its own architecture/memory. High-altitude by design.
+  try {
+    parts.push(await fs.readFile(join(repoRoot(), 'ARTEMIS-CORE.md'), 'utf8'))
+  } catch {
+    // optional — absence just means a thinner self-model
   }
 
   try {
@@ -97,6 +127,50 @@ async function buildSystemPrompt(): Promise<string> {
 
   parts.push(
     'TOOL DISCIPLINE — for conversational replies, greetings, or answers you already know, respond directly without calling any tools. Only use Read, Grep, Glob, Bash, Edit, or Write when the task genuinely requires inspecting or changing files. Unnecessary tool calls add latency.'
+  )
+
+  try {
+    const projects = listProjects()
+    if (projects.length) {
+      const active = getActiveProject()
+      const list = projects
+        .map((p) => `- ${p.name}${active && p.path === active.path ? ' (active)' : ''} — ${p.path}`)
+        .join('\n')
+      parts.push(
+        [
+          `PROJECTS YOU OVERSEE — you have ${projects.length} registered project(s):`,
+          list,
+          '',
+          'You are aware of ALL of them at once for generalized advice and overviews. Your file',
+          'tools (Bash, Glob, Grep) act in the ACTIVE project; use absolute paths for',
+          'Read/Write/Edit. For a cross-repo overview (e.g. a morning review) call the',
+          '`ecosystem_status` tool — do NOT switch the active project just to summarize.',
+          active
+            ? `Active project: "${active.name}" at ${active.path}.${active.remote ? ` Remote: ${active.remote}.` : ''}`
+            : '',
+          `Your OWN source repo (${repoRoot()}) is one of these projects; editing it restarts you, the others do not.`
+        ]
+          .filter(Boolean)
+          .join('\n')
+      )
+    }
+  } catch {
+    // registry not ready yet
+  }
+
+  parts.push(
+    [
+      'CONVERSATION CONTEXT — you are given only the *active* conversation thread, not',
+      'your entire history. Earlier conversations are archived in the local SQLite store',
+      'below a "view floor"; raising that floor is exactly what the "new conversation"',
+      'control does. Archived threads are NOT in your context and you cannot read their',
+      'contents back (they are not lost — just out of view) unless they were summarized',
+      'into PERSISTENT MEMORY. So when asked about a past conversation you do not see, say',
+      'plainly that it is archived and not in your current context rather than guessing or',
+      'pretending to recall it. And do not confuse this with save_memory: a question like',
+      '"do you remember our last conversation?" is asking about recall, NOT a request to',
+      'save a memory — only call save_memory for a specific, durable fact worth keeping.'
+    ].join('\n')
   )
 
   _systemCache = parts.join('\n\n')
@@ -261,6 +335,36 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {},
       required: []
     }
+  },
+  {
+    name: 'ecosystem_status',
+    description:
+      'Cross-repo overview of ALL registered projects at once — for each: branch, uncommitted change count, last commit, and ahead/behind vs upstream. Use for morning reviews and generalized ecosystem summaries WITHOUT switching the active project. Read-only (git status only).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'dispatch_worker',
+    description:
+      'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: {
+          type: 'string',
+          description: 'The project name (as shown in the registry, e.g. "livana-scanner")'
+        },
+        task: {
+          type: 'string',
+          description: 'A clear, self-contained description of the fix the worker should make'
+        },
+        title: { type: 'string', description: 'Optional PR title (defaults to the task)' }
+      },
+      required: ['project', 'task']
+    }
   }
 ]
 
@@ -308,9 +412,27 @@ async function toolEdit(input: {
   return `Edited ${input.file_path}`
 }
 
+const GLOB_CAP = 500 // never return more than this many paths — protects the context window
+
 async function toolGlob(input: { pattern: string; path?: string }): Promise<string> {
-  const cwd = input.path ? resolve(input.path) : repoRoot()
-  const files = await glob(input.pattern, { cwd, absolute: true, nodir: true })
+  const cwd = input.path ? resolve(input.path) : activeProjectRoot()
+  const files = await glob(input.pattern, {
+    cwd,
+    absolute: true,
+    nodir: true,
+    // Skip heavy/vendored dirs — a `**/*` over a repo with node_modules would
+    // otherwise return hundreds of thousands of paths and blow the context window.
+    ignore: [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.next/**',
+      '**/out/**',
+      '**/.svelte-kit/**',
+      '**/.turbo/**'
+    ]
+  })
   // Sort by modification time (newest first)
   const stats = await Promise.all(
     files.map(async (f) => {
@@ -323,7 +445,15 @@ async function toolGlob(input: { pattern: string; path?: string }): Promise<stri
     })
   )
   stats.sort((a, b) => b.mtime - a.mtime)
-  return stats.map((s) => s.f).join('\n') || '(no matches)'
+  if (!stats.length) return '(no matches)'
+  const paths = stats.map((s) => s.f)
+  if (paths.length > GLOB_CAP) {
+    return (
+      paths.slice(0, GLOB_CAP).join('\n') +
+      `\n\n…[${paths.length - GLOB_CAP} more matches omitted — narrow the pattern]`
+    )
+  }
+  return paths.join('\n')
 }
 
 async function toolGrep(input: {
@@ -333,7 +463,7 @@ async function toolGrep(input: {
   output_mode?: 'content' | 'files_with_matches' | 'count'
   '-i'?: boolean
 }): Promise<string> {
-  const searchPath = input.path ? resolve(input.path) : repoRoot()
+  const searchPath = input.path ? resolve(input.path) : activeProjectRoot()
   const mode = input.output_mode ?? 'content'
   const flags = input['-i'] ? 'gi' : 'g'
   let re: RegExp
@@ -411,7 +541,7 @@ async function toolBash(input: {
     throw new Error('Refused: dangerous command blocked by Artemis.')
   }
   const { stdout, stderr } = await execAsync(input.command, {
-    cwd: repoRoot(),
+    cwd: activeProjectRoot(),
     timeout: input.timeout ?? 30_000,
     maxBuffer: 2 * 1024 * 1024
   })
@@ -456,7 +586,81 @@ async function toolRecallMemory(): Promise<string> {
     : 'No memories saved yet.'
 }
 
-async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+/** Dispatch a worker agent to fix an issue in a registered project and open a gated PR. */
+async function toolDispatchWorker(input: {
+  project: string
+  task: string
+  title?: string
+}): Promise<string> {
+  const projects = listProjects()
+  const match = projects.find(
+    (p) => p.name.toLowerCase() === input.project.trim().toLowerCase()
+  )
+  if (!match) {
+    return `No project named "${input.project}". Registered: ${projects.map((p) => p.name).join(', ') || '(none)'}.`
+  }
+  const result = await runWorker({
+    projectName: match.name,
+    projectPath: match.path,
+    remote: match.remote,
+    task: input.task,
+    title: input.title,
+    label: 'worker'
+  })
+  return result.ok
+    ? `Opened a PR for "${match.name}": ${result.url} (branch ${result.branch}). It's in the review queue for your approval.`
+    : `Worker did not open a PR for "${match.name}": ${result.error}`
+}
+
+/** Cross-repo git overview of every registered project — the morning-review data. */
+async function toolEcosystemStatus(): Promise<string> {
+  const projects = listProjects()
+  if (!projects.length) return 'No projects registered yet.'
+  const activePath = activeProjectRoot()
+
+  const rows = await Promise.all(
+    projects.map(async (p) => {
+      const run = async (cmd: string): Promise<string> => {
+        try {
+          return (await execAsync(cmd, { cwd: p.path, timeout: 10_000 })).stdout.trim()
+        } catch {
+          return ''
+        }
+      }
+      const branch = (await run('git rev-parse --abbrev-ref HEAD')) || '(no git)'
+      const status = await run('git status --porcelain')
+      const changed = status ? status.split('\n').filter(Boolean) : []
+      // Single-quote formats with spaces: the shell would otherwise split them into
+      // separate args / treat parens as a subshell (→ empty result).
+      const last = (await run("git log -1 --pretty=format:'%h %s (%cr)'")) || '(no commits)'
+      const recent = (await run("git log --since='7 days ago' --oneline"))
+        .split('\n')
+        .filter(Boolean).length
+      const ahead = (await run('git rev-list --count @{u}..HEAD')) || '0'
+      const behind = (await run('git rev-list --count HEAD..@{u}')) || '0'
+      const sync = ahead !== '0' || behind !== '0' ? ` [↑${ahead} ↓${behind}]` : ''
+      const star = p.path === activePath ? ' ←active' : ''
+
+      const lines = [
+        `• ${p.name}${star} — ${branch}${sync}, ${changed.length} uncommitted file(s)`,
+        `    last: ${last}`,
+        `    activity: ${recent} commit(s) in last 7 days`
+      ]
+      if (changed.length) {
+        // Strip the porcelain status prefix (e.g. " M ", "?? ") to bare paths.
+        const files = changed.map((l) => l.slice(3))
+        const shown = files.slice(0, 6).join(', ')
+        lines.push(`    changed: ${shown}${files.length > 6 ? ` (+${files.length - 6} more)` : ''}`)
+      }
+      lines.push(`    ${p.path}`)
+      return lines.join('\n')
+    })
+  )
+
+  return `Ecosystem status — ${projects.length} project(s):\n\n${rows.join('\n\n')}`
+}
+
+export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   switch (name) {
     case 'Read':
       return toolRead(input as Parameters<typeof toolRead>[0])
@@ -476,34 +680,23 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       return toolSaveMemory(input as Parameters<typeof toolSaveMemory>[0])
     case 'recall_memory':
       return toolRecallMemory()
+    case 'ecosystem_status':
+      return toolEcosystemStatus()
+    case 'dispatch_worker':
+      return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:
       throw new Error(`Unknown tool: ${name}`)
   }
 }
 
-// ─── Anthropic client ──────────────────────────────────────────────────────
+// ─── Message assembly ──────────────────────────────────────────────────────
 
-let _client: Anthropic | null = null
-
-async function getClient(): Promise<Anthropic> {
-  if (_client) return _client
-  const key = await getApiKey()
-  if (!key) {
-    throw new Error(
-      'No API key found. Set ANTHROPIC_API_KEY in your environment or add one in Artemis settings.'
-    )
-  }
-  _client = new Anthropic({ apiKey: key })
-  return _client
-}
-
-/** Convert SQLite message history into Anthropic MessageParam format.
+/** Convert SQLite message history into the canonical Anthropic MessageParam format.
  *  - Skip leading assistant messages (API requires first message to be user).
  *  - Merge consecutive same-role messages to satisfy the alternation constraint.
- *  - Mark the last assistant message as a cache point so Anthropic caches the
- *    conversation prefix (prompt caching: 90% cheaper on cache hits).
+ *  Backend-neutral: prompt-cache anchoring is the AnthropicClient's job, not this.
  */
-function buildMessages(
+export function buildMessages(
   history: { role: 'user' | 'assistant'; text: string }[],
   newUserMessage: string
 ): Anthropic.MessageParam[] {
@@ -523,24 +716,6 @@ function buildMessages(
     }
   }
 
-  // Mark the last assistant message as a cache anchor so the prefix is cached
-  const lastAssistantIdx = [...params].reverse().findIndex((m) => m.role === 'assistant')
-  if (lastAssistantIdx >= 0) {
-    const idx = params.length - 1 - lastAssistantIdx
-    const msg = params[idx]
-    params[idx] = {
-      role: 'assistant',
-      content: [
-        {
-          type: 'text',
-          text: msg.content as string,
-          // @ts-expect-error cache_control is a beta header not yet typed in sdk
-          cache_control: { type: 'ephemeral' }
-        }
-      ]
-    }
-  }
-
   // Append the new user turn
   params.push({ role: 'user', content: newUserMessage })
   return params
@@ -548,7 +723,7 @@ function buildMessages(
 
 // ─── Speechline helpers ────────────────────────────────────────────────────
 
-function splitSpeech(text: string): { display: string; speech: string } {
+export function splitSpeech(text: string): { display: string; speech: string } {
   const i = text.indexOf(SAY_MARKER)
   if (i === -1) return { display: text, speech: '' }
   return {
@@ -608,6 +783,13 @@ export async function resetSession(): Promise<void> {
   lastTurnId = null
 }
 
+// Reversible counterpart to resetSession: un-archive the prior thread (restore the
+// previous view floor and drop the fresh-start greeting). Backs the Undo toast.
+export async function undoSession(): Promise<void> {
+  undoNewConversation()
+  lastTurnId = null
+}
+
 // ─── Permission gate ───────────────────────────────────────────────────────
 
 export interface PermissionAsker {
@@ -653,68 +835,59 @@ export async function runAgent(
   send({ state: 'thinking' })
 
   try {
-    const client = await getClient()
-    const systemPrompt = await buildSystemPrompt()
+    // The brain for this turn — Anthropic API, local Ollama, or (later) the
+    // subscription CLI — chosen fresh from the backend preference. The loop below
+    // is identical regardless of which one we got.
+    // Snapshot history BEFORE persisting this turn's user message, then persist it
+    // exactly once here (the renderer no longer commits it). Done before the model
+    // client call so the message survives even if the client errors (e.g. no key).
+    // buildMessages appends `prompt` to the snapshot, so the model sees the message a
+    // single time — doing both (renderer-commit + buildMessages) caused the double-send.
     const history = loadRecentMessages(60)
-    const model = getModel()
+    appendMessage('user', prompt)
 
-    // Build the message array: history + new user message, with cache anchor
+    const client = await getModelClient()
+    const systemPrompt = await buildSystemPrompt()
+
+    // Build the canonical message array: history + new user message.
     const localMessages: Anthropic.MessageParam[] = buildMessages(history, prompt)
 
     let accText = ''
 
     // The agentic loop: stream response, execute tool calls, repeat until end_turn.
     while (true) {
-      let currentText = ''
       send({ state: 'thinking' })
 
-      const stream = client.messages.stream({
-        model,
-        max_tokens: 8096,
-        system: [
-          {
-            type: 'text',
-            text: systemPrompt,
-            // @ts-expect-error cache_control beta
-            cache_control: { type: 'ephemeral' }
-          }
-        ],
+      const turnStream = client.stream({
+        system: systemPrompt,
         messages: localMessages,
-        tools: TOOLS,
-        betas: ['prompt-caching-2024-07-31']
+        tools: TOOLS
       })
 
       // Stream text tokens to the renderer in real-time
-      for await (const event of stream as AsyncIterable<Anthropic.MessageStreamEvent>) {
-        if (
-          event.type === 'content_block_delta' &&
-          event.delta.type === 'text_delta'
-        ) {
-          const token = event.delta.text
-          currentText += token
-          accText += token
-          turn.text = accText
-          send({ token })
-          const now = Date.now()
-          if (now - lastPersist > 700) {
-            lastPersist = now
-            saveTurn(turn)
-          }
+      for await (const token of turnStream.tokens) {
+        accText += token
+        turn.text = accText
+        send({ token })
+        const now = Date.now()
+        if (now - lastPersist > 700) {
+          lastPersist = now
+          saveTurn(turn)
         }
       }
 
-      const msg = await stream.finalMessage()
+      const final = await turnStream.final()
 
       // Add the assistant's full response (text + any tool_use blocks) to local context
-      localMessages.push({ role: 'assistant', content: msg.content })
+      localMessages.push({ role: 'assistant', content: final.content })
 
-      if (msg.stop_reason !== 'tool_use') break // done — exit the loop
+      if (final.stopReason !== 'tool_use') break // done — exit the loop
 
       // Execute tool calls
       send({ state: 'executing' })
       const toolResults: Anthropic.ToolResultBlockParam[] = []
 
-      for (const block of msg.content) {
+      for (const block of final.content) {
         if (block.type !== 'tool_use') continue
 
         const toolInput = block.input as Record<string, unknown>
@@ -753,7 +926,7 @@ export async function runAgent(
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
-            content: result
+            content: clampToolOutput(result)
           })
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)

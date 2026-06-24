@@ -1,5 +1,27 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+export interface Project {
+  id: number
+  name: string
+  path: string
+  remote: string | null
+  branch: string | null
+  dirty: boolean
+  active: boolean
+  gh: { slug: string; url: string } | null
+}
+
+export interface PrReview {
+  id: number
+  project: string
+  title: string
+  url: string
+  branch: string | null
+  agent: string | null
+  reviewed: boolean
+  created_at: number
+}
+
 const api = {
   terminal: {
     spawn: (opts: { cols: number; rows: number }) =>
@@ -51,13 +73,42 @@ const api = {
     setKey: (key: string): Promise<void> => ipcRenderer.invoke('auth:setKey', key),
     clearKey: (): Promise<void> => ipcRenderer.invoke('auth:clearKey')
   },
+  // Multi-project foundation: register/switch the repos Artemis oversees.
+  projects: {
+    list: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
+    // Opens a native multi-select folder picker; returns the updated list.
+    add: (): Promise<Project[]> => ipcRenderer.invoke('projects:add'),
+    remove: (id: number): Promise<Project[]> => ipcRenderer.invoke('projects:remove', id),
+    setActive: (path: string): Promise<Project[]> => ipcRenderer.invoke('projects:setActive', path)
+  },
+  // PR Review Queue — worker-agent PRs awaiting the human's approval.
+  prReviews: {
+    list: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:list'),
+    setReviewed: (id: number, reviewed: boolean): Promise<PrReview[]> =>
+      ipcRenderer.invoke('prReviews:setReviewed', { id, reviewed }),
+    clearReviewed: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:clearReviewed')
+  },
   agent: {
     run: (requestId: string, prompt: string): Promise<void> =>
       ipcRenderer.invoke('agent:run', { requestId, prompt }),
     // Start a fresh conversation: new SDK context + archived transcript view.
     newConversation: (): Promise<void> => ipcRenderer.invoke('agent:newConversation'),
+    // Reverse the last new-conversation: restore the prior thread.
+    undoNewConversation: (): Promise<void> => ipcRenderer.invoke('agent:undoNewConversation'),
     getModel: (): Promise<string> => ipcRenderer.invoke('agent:getModel'),
     setModel: (model: string): Promise<void> => ipcRenderer.invoke('agent:setModel', model),
+    // Which brain runs turns: 'anthropic' (metered API), 'ollama' (local/box), or
+    // 'claude-cli' (flat subscription, not wired yet). Host/model are for ollama.
+    getBackendConfig: (): Promise<{
+      backend: string
+      ollamaHost: string
+      ollamaModel: string
+    }> => ipcRenderer.invoke('agent:getBackendConfig'),
+    setBackendConfig: (cfg: {
+      backend?: string
+      ollamaHost?: string
+      ollamaModel?: string
+    }): Promise<void> => ipcRenderer.invoke('agent:setBackendConfig', cfg),
     // Ask main whether a turn was streaming when the renderer reloaded, so the
     // fresh page can re-attach instead of dropping the answer.
     resync: (): Promise<null | {

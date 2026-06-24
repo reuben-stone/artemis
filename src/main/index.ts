@@ -1,19 +1,70 @@
-import { app, shell, BrowserWindow, ipcMain, session, systemPreferences } from 'electron'
-import { join } from 'path'
+import { app, shell, BrowserWindow, ipcMain, session, systemPreferences, dialog } from 'electron'
+import { join, basename } from 'path'
 import os from 'os'
 import { existsSync } from 'fs'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent, getResyncTurn, resetSession } from './agent'
+import { runAgent, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
+import { parseGitRemote } from './github'
 import {
   appendMessage,
   loadRecentMessages,
   appendTerminal,
   loadTerminalScrollback,
-  startNewConversation,
   getModel,
-  setModel
+  setModel,
+  getBackend,
+  setBackend,
+  getOllamaHost,
+  setOllamaHost,
+  getOllamaModel,
+  setOllamaModel,
+  listProjects,
+  addProject,
+  removeProject,
+  getActiveProjectPath,
+  setActiveProjectPath,
+  ensureSelfProject,
+  listPrReviews,
+  setPrReviewed,
+  clearReviewedPrs
 } from './store'
+
+const execp = promisify(exec)
+
+// Read a repo's GitHub remote + current branch/dirty state for the Projects UI.
+// Best-effort: a non-git folder just yields nulls.
+async function gitInfo(path: string): Promise<{ remote: string | null; branch: string | null; dirty: boolean }> {
+  const run = async (cmd: string) => (await execp(cmd, { cwd: path })).stdout.trim()
+  let remote: string | null = null
+  let branch: string | null = null
+  let dirty = false
+  try {
+    remote = (await run('git config --get remote.origin.url')) || null
+  } catch {
+    /* no remote */
+  }
+  try {
+    branch = (await run('git rev-parse --abbrev-ref HEAD')) || null
+    dirty = (await run('git status --porcelain')).length > 0
+  } catch {
+    /* not a git repo */
+  }
+  return { remote, branch, dirty }
+}
+
+// The registry enriched with live git status + active flag, for the renderer.
+async function projectsWithStatus(): Promise<unknown[]> {
+  const active = getActiveProjectPath()
+  return Promise.all(
+    listProjects().map(async (p) => {
+      const { branch, dirty } = await gitInfo(p.path)
+      return { ...p, branch, dirty, active: p.path === active, gh: parseGitRemote(p.remote) }
+    })
+  )
+}
 
 // node-pty is a native module; load lazily so a build issue doesn't crash boot.
 let pty: typeof import('node-pty') | null = null
@@ -148,16 +199,78 @@ ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prom
 // the main process whether a turn was in flight, and re-attaches to it.
 ipcMain.handle('agent:resync', () => getResyncTurn())
 
-// "New conversation": drop the SDK session (fresh context) and archive the visible
-// thread by raising the view floor. History stays in the DB.
+// "New conversation": drop the session (fresh context) and archive the visible
+// thread by raising the view floor (resetSession does both). History stays in the DB.
 ipcMain.handle('agent:newConversation', async () => {
   await resetSession()
-  startNewConversation()
+})
+// Reversible: un-archive the prior thread (restores the previous view floor).
+ipcMain.handle('agent:undoNewConversation', async () => {
+  await undoSession()
 })
 
 // Model preference (Sonnet default, switchable to Opus).
 ipcMain.handle('agent:getModel', () => getModel())
 ipcMain.handle('agent:setModel', (_e, model: string) => setModel(model))
+
+// Backend preference: which brain runs the turn (anthropic API / local ollama /
+// claude-cli subscription). Host/model for ollama point at laptop or a brain box.
+ipcMain.handle('agent:getBackendConfig', () => ({
+  backend: getBackend(),
+  ollamaHost: getOllamaHost(),
+  ollamaModel: getOllamaModel()
+}))
+ipcMain.handle(
+  'agent:setBackendConfig',
+  (_e, cfg: { backend?: string; ollamaHost?: string; ollamaModel?: string }) => {
+    if (cfg.backend != null) setBackend(cfg.backend)
+    if (cfg.ollamaHost != null) setOllamaHost(cfg.ollamaHost)
+    if (cfg.ollamaModel != null) setOllamaModel(cfg.ollamaModel)
+  }
+)
+
+// --- Projects (multi-project foundation) IPC ---
+ipcMain.handle('projects:list', () => projectsWithStatus())
+
+// Open a native folder picker (multi-select) and register each chosen folder,
+// auto-detecting its GitHub remote from `origin`.
+ipcMain.handle('projects:add', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const res = await dialog.showOpenDialog(win!, {
+    title: 'Add project folder(s)',
+    properties: ['openDirectory', 'multiSelections', 'createDirectory']
+  })
+  if (!res.canceled) {
+    for (const path of res.filePaths) {
+      const { remote } = await gitInfo(path)
+      addProject(basename(path), path, remote)
+    }
+  }
+  return projectsWithStatus()
+})
+
+ipcMain.handle('projects:remove', (_e, id: number) => {
+  removeProject(id)
+  invalidateSystemCache()
+  return projectsWithStatus()
+})
+
+ipcMain.handle('projects:setActive', (_e, path: string) => {
+  setActiveProjectPath(path)
+  invalidateSystemCache() // the active project is baked into the system prompt
+  return projectsWithStatus()
+})
+
+// --- PR Review Queue IPC (worker-agent output, human approval) ---
+ipcMain.handle('prReviews:list', () => listPrReviews())
+ipcMain.handle('prReviews:setReviewed', (_e, { id, reviewed }: { id: number; reviewed: boolean }) => {
+  setPrReviewed(id, reviewed)
+  return listPrReviews()
+})
+ipcMain.handle('prReviews:clearReviewed', () => {
+  clearReviewedPrs()
+  return listPrReviews()
+})
 
 // --- Auth IPC ---
 ipcMain.handle('auth:status', async () => ({
@@ -181,6 +294,8 @@ app.whenReady().then(() => {
     systemPreferences.askForMediaAccess('microphone').catch(() => {})
   }
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media')
+
+  ensureSelfProject() // seed Artemis's own repo so the project switcher is never empty
 
   createWindow()
   app.on('activate', () => {

@@ -99,7 +99,9 @@ export default function Chat({
     const ta = taRef.current
     if (!ta) return
     ta.style.height = 'auto'
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`
+    // Keep this cap in sync with the CSS max-height (.chat-input textarea); if the
+    // JS cap exceeds it, max-height wins and the content overflows into a scrollbar.
+    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
   }, [draft])
 
   const submit = () => {
