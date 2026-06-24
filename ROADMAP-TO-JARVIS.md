@@ -244,6 +244,14 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 - **MCP integration** — calendar, email, GitHub, Slack, notes, smart home — gated by permission flow
 - **Product data connectors (read-only)** — pull from the Livana product databases (the Lumi/LumiLens **MongoDB Atlas**: reviews, subscribers, scan/usage records) for summaries and overviews. Start **read-only** behind a per-project connection config; any write capability is a separate, explicitly-gated decision. Pairs with the GA4 analytics intake to give Reuben a real "state of the products" briefing.
 - **Trust boundary for untrusted content** — the moment Artemis can *read* email/web AND *act* (send, book, run), prompt injection becomes a real attack surface ("ignore previous instructions and …" hidden in an email/page). The current `DANGEROUS` regex blocklist won't catch this. Required: treat all fetched/received content as untrusted data (never instructions), and require explicit confirmation for any *outward-effecting* action (send/post/pay/delete), separate from the existing command gate.
+- **Connections & onboarding UI (portability)** — a single "Connections" panel so moving
+  Artemis to a new machine is point-and-click, not terminal setup. Shows live status and
+  setup for each integration: Anthropic API key (already have `KeySetup`), **GitHub** (`gh
+  auth status` → connected-as, with a guided `gh auth login`), **Google Analytics**
+  (file-pick a GA4 service-account JSON, stored encrypted via `safeStorage` like the API
+  key, + per-project property IDs), and **clone-from-GitHub** (pull a Livana repo that
+  isn't local yet). Pairs with building the GA connector — the GA credential picker needs
+  a home, so build this alongside that work.
 - **Skill library** — reusable named procedures Artemis can invoke
 - **Web actions** beyond fetch/search — structured browsing
 - **Done when:** "Artemis, book that and email them the link" works end-to-end
