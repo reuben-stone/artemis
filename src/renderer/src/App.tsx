@@ -177,6 +177,20 @@ export default function App() {
     if (updated) setPrs(updated)
   }, [])
 
+  // Refetch on open — worker agents add PRs in the main process during a turn, so the
+  // renderer's cached list goes stale until we re-pull it.
+  const openPrs = useCallback(async () => {
+    const updated = await window.artemis?.prReviews?.list()
+    if (updated) setPrs(updated)
+    setShowPrs(true)
+  }, [])
+
+  const openProjects = useCallback(async () => {
+    const updated = await window.artemis?.projects?.list()
+    if (updated) setProjects(updated)
+    setShowProjects(true)
+  }, [])
+
   const pendingPrs = prs.filter((p) => !p.reviewed).length
 
   // Restore the transcript from the SQLite backbone; only greet on a genuinely fresh
@@ -476,14 +490,14 @@ export default function App() {
         <div className="titlebar-right">
           <button
             className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
-            onClick={() => setShowProjects((v) => !v)}
+            onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
             title="Switch / manage projects"
           >
             ▣ {activeProject?.name ?? 'project'}
           </button>
           <button
             className={`pr-queue-btn ${pendingPrs > 0 ? 'on' : ''}`}
-            onClick={() => setShowPrs((v) => !v)}
+            onClick={() => (showPrs ? setShowPrs(false) : openPrs())}
             title="PR review queue"
           >
             ⎇ PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
