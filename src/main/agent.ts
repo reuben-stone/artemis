@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { join, dirname, resolve } from 'path'
 import { promises as fs } from 'fs'
 import { exec } from 'child_process'
@@ -834,8 +834,13 @@ export interface PermissionAsker {
 
 // ─── Main agent loop ───────────────────────────────────────────────────────
 
+// The agent loop's only link to the outside world: a transport that delivers stream
+// events to the face. Today an Electron adapter forwards to the renderer; tomorrow a
+// sidecar daemon swaps in a socket transport — the loop itself stays unchanged.
+export type AgentEmit = (event: Record<string, unknown>) => void
+
 export async function runAgent(
-  win: BrowserWindow,
+  emit: AgentEmit,
   requestId: string,
   prompt: string,
   askPermission: PermissionAsker
@@ -865,7 +870,7 @@ export async function runAgent(
 
   const send = (payload: Record<string, unknown>) => {
     if (typeof payload.state === 'string') turn.state = payload.state as string
-    if (!win.isDestroyed()) win.webContents.send('agent:event', { requestId, ...payload })
+    emit({ requestId, ...payload })
   }
 
   send({ state: 'thinking' })
