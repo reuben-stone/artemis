@@ -92,7 +92,10 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 
 1. **Graceful restart (level 1) — ✅ DONE.** Transcript + terminal scrollback persist to SQLite and restore on boot. A restart is a ~1s blink that returns with everything intact. `src/main/store.ts` is the live backbone.
 
-2. **Sidecar brain (level 2 — PULL EARLIER).** Move the agent loop into a persistent local daemon. Electron becomes a disposable face that reconnects. Only editing the daemon's own code restarts the brain. *Originally slated alongside Phase 6, but this is the single highest-leverage structural piece — it simultaneously unblocks safe self-modification (Phase 9), proactivity (Phase 6), and ends session-killing on every `src/main` edit. Deferring it contradicts calling it the cornerstone. Recommend building it right after voice basics, before reach/senses pile more code onto a foundation we've already decided is temporary.*
+2. **Sidecar brain (level 2).** Move the agent loop into a persistent local daemon. Electron becomes a disposable face that reconnects. Only editing the daemon's own code restarts the brain. Unblocks safe self-modification (Phase 9) and proactivity (Phase 6), and ends session-killing on every `src/main` edit.
+   - **Prep DONE (2026-06-24)** — the two de-risking prerequisites are in, both valuable today:
+     (a) the agent loop is decoupled from Electron behind an `AgentEmit` transport (`agent.ts`/`index.ts`), so the daemon split is just "swap the transport"; (b) the store's DB driver is injectable + covered by real tests (`store.ts`, `test/store.test.ts` via node:sqlite) — the daemon and the face will share that persistence, so it's now hardened.
+   - **Daemon itself: deferred to the new always-on Apple Silicon machine** ([[artemis-target-hardware]]) — a 24/7 daemon only pays off on an always-on host; building the full split + reconnection + autostart belongs there.
 
 ### Data & persistence — decided
 
