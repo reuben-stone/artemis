@@ -8,7 +8,8 @@ import {
   DANGEROUS,
   AUTO_ALLOW,
   buildMessages,
-  executeTool
+  executeTool,
+  clampToolOutput
 } from '../src/main/agent'
 import { toOllamaMessages } from '../src/main/model/ollama'
 import { parseGitRemote } from '../src/main/github'
@@ -140,6 +141,18 @@ describe('context — conversation assembly', () => {
     expect(msgs[0].role).toBe('user')
     expect(msgs[0].content).toBe('one\n\ntwo')
     expect(msgs[msgs.length - 1]).toEqual({ role: 'user', content: 'three' })
+  })
+})
+
+describe('context safety — tool output clamp', () => {
+  it('passes small output through unchanged', () => {
+    expect(clampToolOutput('short')).toBe('short')
+  })
+  it('truncates a huge output to protect the context window', () => {
+    const huge = 'x'.repeat(500_000)
+    const out = clampToolOutput(huge)
+    expect(out.length).toBeLessThan(huge.length)
+    expect(out).toMatch(/truncated/)
   })
 })
 
