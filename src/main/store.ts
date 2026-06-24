@@ -76,6 +76,14 @@ function getDb(): Database.Database {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      remote TEXT,
+      created_at INTEGER NOT NULL
+    );
   `)
   return db
 }
@@ -174,6 +182,83 @@ export function getOllamaModel(): string {
 
 export function setOllamaModel(model: string): void {
   setMeta(OLLAMA_MODEL_KEY, model)
+}
+
+// --- multi-project registry (the ops-layer spine) ----------------------------
+
+// Generic by design: a list of overseen repos (any ecosystem, not just Livana),
+// each a working dir Artemis can switch into. The active one drives the agent's
+// file-tool cwd. See ROADMAP-TO-JARVIS.md → Phase M.
+const ACTIVE_PROJECT_KEY = 'active_project' // stores the active project's path
+
+export interface Project {
+  id: number
+  name: string
+  path: string
+  remote: string | null
+}
+
+export function listProjects(): Project[] {
+  return getDb()
+    .prepare('SELECT id, name, path, remote FROM projects ORDER BY id ASC')
+    .all() as Project[]
+}
+
+/** Add (or upsert by path) a project. First project added becomes active. */
+export function addProject(name: string, path: string, remote: string | null): Project {
+  const db = getDb()
+  db.prepare(
+    `INSERT INTO projects (name, path, remote, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(path) DO UPDATE SET name=excluded.name, remote=excluded.remote`
+  ).run(name, path, remote, Date.now())
+  if (!getMeta(ACTIVE_PROJECT_KEY)) setMeta(ACTIVE_PROJECT_KEY, path)
+  return db.prepare('SELECT id, name, path, remote FROM projects WHERE path = ?').get(path) as Project
+}
+
+export function removeProject(id: number): void {
+  const db = getDb()
+  const row = db.prepare('SELECT path FROM projects WHERE id = ?').get(id) as
+    | { path: string }
+    | undefined
+  db.prepare('DELETE FROM projects WHERE id = ?').run(id)
+  // If we removed the active project, fall back to the first remaining one.
+  if (row && getMeta(ACTIVE_PROJECT_KEY) === row.path) {
+    const next = db.prepare('SELECT path FROM projects ORDER BY id ASC LIMIT 1').get() as
+      | { path: string }
+      | undefined
+    setMeta(ACTIVE_PROJECT_KEY, next?.path ?? '')
+  }
+}
+
+/** The active project's path — defaults to Artemis's own repo if none set. */
+export function getActiveProjectPath(): string {
+  return getMeta(ACTIVE_PROJECT_KEY) || app.getAppPath()
+}
+
+export function setActiveProjectPath(path: string): void {
+  setMeta(ACTIVE_PROJECT_KEY, path)
+}
+
+export function getActiveProject(): Project | null {
+  const path = getActiveProjectPath()
+  return (
+    (getDb()
+      .prepare('SELECT id, name, path, remote FROM projects WHERE path = ?')
+      .get(path) as Project | undefined) ?? null
+  )
+}
+
+/** Seed Artemis's own repo as a project on first run so the switcher is never empty. */
+export function ensureSelfProject(): void {
+  const db = getDb()
+  const selfPath = app.getAppPath()
+  const existing = db.prepare('SELECT id FROM projects WHERE path = ?').get(selfPath)
+  if (!existing) {
+    db.prepare(
+      'INSERT INTO projects (name, path, remote, created_at) VALUES (?, ?, ?, ?)'
+    ).run('artemis (self)', selfPath, null, Date.now())
+  }
+  if (!getMeta(ACTIVE_PROJECT_KEY)) setMeta(ACTIVE_PROJECT_KEY, selfPath)
 }
 
 // --- transcript ---------------------------------------------------------------

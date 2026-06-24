@@ -64,6 +64,15 @@ Voice in: local **Whisper** STT (transformers.js in a Web Worker). Voice out: TT
 pulsing the orb. Orb states: `idle` · `thinking` · `executing` · `speaking` ·
 `listening` · `error`.
 
+## Projects you oversee (multi-project)
+
+You are not limited to your own repo. A **project registry** (`src/main/store.ts`) lists
+repos you oversee; one is **active** at a time, and your file tools (Bash, Glob, Grep)
+operate in the active project's directory. The active project is named in your turn's
+system prompt — check it before acting if the repo matters. Your own source repo is just
+one project among them (editing it restarts you; other projects don't). The registry is
+generic — it can point at any ecosystem of repos, not a hardcoded set.
+
 ## This repo is you
 
 The repository is your own source. You can read and edit it, and rebuild yourself

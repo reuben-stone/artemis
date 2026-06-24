@@ -15,6 +15,8 @@ import {
   markTurnClaimed,
   startNewConversation,
   undoNewConversation,
+  getActiveProjectPath,
+  getActiveProject,
   type StoredTurn
 } from './store'
 
@@ -30,8 +32,16 @@ export const DANGEROUS = /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|
 // Tools that need no permission prompt (read-only + our own memory ops).
 export const AUTO_ALLOW = new Set(['Read', 'Glob', 'Grep', 'save_memory', 'recall_memory', 'WebFetch'])
 
+// Artemis's OWN repo — identity docs, self-model, memory live here regardless of
+// which project is active.
 function repoRoot(): string {
   return app.getAppPath()
+}
+
+// The ACTIVE project's working dir — where file tools (Bash/Glob/Grep) operate.
+// Defaults to Artemis's own repo when no other project is selected.
+function activeProjectRoot(): string {
+  return getActiveProjectPath()
 }
 
 // ─── System prompt cache ───────────────────────────────────────────────────
@@ -106,6 +116,27 @@ async function buildSystemPrompt(): Promise<string> {
   parts.push(
     'TOOL DISCIPLINE — for conversational replies, greetings, or answers you already know, respond directly without calling any tools. Only use Read, Grep, Glob, Bash, Edit, or Write when the task genuinely requires inspecting or changing files. Unnecessary tool calls add latency.'
   )
+
+  try {
+    const active = getActiveProject()
+    if (active) {
+      parts.push(
+        [
+          `ACTIVE PROJECT — you are currently operating on "${active.name}" at ${active.path}.`,
+          'Bash, Glob, and Grep default to this directory; use absolute paths under it for',
+          'Read/Write/Edit.',
+          active.remote ? `Its GitHub remote is ${active.remote}.` : '',
+          'This is one of several projects you oversee — the user can switch the active project,',
+          'so confirm which repo you are in before acting if it matters. Your OWN source repo',
+          `(${repoRoot()}) is a separate project; editing it restarts you.`
+        ]
+          .filter(Boolean)
+          .join(' ')
+      )
+    }
+  } catch {
+    // registry not ready yet
+  }
 
   parts.push(
     [
@@ -332,7 +363,7 @@ async function toolEdit(input: {
 }
 
 async function toolGlob(input: { pattern: string; path?: string }): Promise<string> {
-  const cwd = input.path ? resolve(input.path) : repoRoot()
+  const cwd = input.path ? resolve(input.path) : activeProjectRoot()
   const files = await glob(input.pattern, { cwd, absolute: true, nodir: true })
   // Sort by modification time (newest first)
   const stats = await Promise.all(
@@ -356,7 +387,7 @@ async function toolGrep(input: {
   output_mode?: 'content' | 'files_with_matches' | 'count'
   '-i'?: boolean
 }): Promise<string> {
-  const searchPath = input.path ? resolve(input.path) : repoRoot()
+  const searchPath = input.path ? resolve(input.path) : activeProjectRoot()
   const mode = input.output_mode ?? 'content'
   const flags = input['-i'] ? 'gi' : 'g'
   let re: RegExp
@@ -434,7 +465,7 @@ async function toolBash(input: {
     throw new Error('Refused: dangerous command blocked by Artemis.')
   }
   const { stdout, stderr } = await execAsync(input.command, {
-    cwd: repoRoot(),
+    cwd: activeProjectRoot(),
     timeout: input.timeout ?? 30_000,
     maxBuffer: 2 * 1024 * 1024
   })
