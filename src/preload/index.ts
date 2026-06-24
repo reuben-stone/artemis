@@ -24,7 +24,14 @@ export interface BriefingProject {
   activity7d: number
   lastCommit: string | null
   prs: Array<{ number: number; title: string; agent: boolean }>
-  analytics: Array<{ label: string; users: number; newUsers: number; sessions: number; views: number }>
+  analytics: Array<{
+    label: string
+    users: number
+    newUsers: number
+    sessions: number
+    views: number
+    delta: { users: number | null; sessions: number | null; views: number | null }
+  }>
 }
 
 export interface BriefingData {

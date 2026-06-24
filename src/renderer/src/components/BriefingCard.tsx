@@ -59,15 +59,19 @@ export function BriefingCard({
                 </div>
 
                 {p.analytics.length > 0 && (
-                  <div className="brief-analytics">
+                  <div className="brief-section">
+                    <div className="brief-section-head">Analytics · GA4 · last 7 days</div>
                     {p.analytics.map((a) => (
-                      <div className="brief-stat" key={a.label}>
-                        <span className="brief-stat-label">{a.label}</span>
-                        <span className="brief-stat-vals">
-                          {fmt(a.users)} users · {fmt(a.sessions)} sessions · {fmt(a.views)} views
-                        </span>
+                      <div className="brief-ga" key={a.label}>
+                        <div className="brief-ga-label">{a.label}</div>
+                        <div className="brief-kpis">
+                          <Kpi n={a.users} d={a.delta.users} label="Users" />
+                          <Kpi n={a.sessions} d={a.delta.sessions} label="Sessions" />
+                          <Kpi n={a.views} d={a.delta.views} label="Views" />
+                        </div>
                       </div>
                     ))}
+                    <div className="brief-section-foot">vs previous 7 days</div>
                   </div>
                 )}
 
@@ -105,6 +109,20 @@ export function BriefingCard({
           })
         )}
       </div>
+    </div>
+  )
+}
+
+function Kpi({ n, d, label }: { n: number; d: number | null; label: string }): JSX.Element {
+  return (
+    <div className="kpi">
+      <div className="kpi-num">{fmt(n)}</div>
+      {d !== null && (
+        <div className={`kpi-delta ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}`}>
+          {d > 0 ? '▲' : d < 0 ? '▼' : '–'} {Math.abs(d)}%
+        </div>
+      )}
+      <div className="kpi-label">{label}</div>
     </div>
   )
 }
