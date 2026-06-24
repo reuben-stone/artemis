@@ -6,6 +6,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { glob } from 'glob'
 import { getModelClient } from './model'
+import { runWorker } from './worker'
 import { loadMemory, saveMemory } from './memory'
 import {
   loadRecentMessages,
@@ -27,8 +28,10 @@ const execAsync = promisify(exec)
 // from the on-screen transcript. Kept in sync with renderer/agent/speech.ts.
 const SAY_MARKER = '⟦say⟧'
 
-// Patterns we refuse without asking the user.
-export const DANGEROUS = /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot|>\s*\/dev\/sd)/i
+// Shared safety primitives (also used by the worker loop). Imported for internal use
+// and re-exported so existing importers/tests that reference them via agent.ts work.
+import { DANGEROUS, clampToolOutput } from './safety'
+export { DANGEROUS, clampToolOutput }
 
 // Tools that need no permission prompt (read-only + our own memory ops).
 export const AUTO_ALLOW = new Set([
@@ -40,18 +43,6 @@ export const AUTO_ALLOW = new Set([
   'WebFetch',
   'ecosystem_status'
 ])
-
-// Hard ceiling on any single tool result fed back to the model (~tens of thousands of
-// tokens). A runaway Read/Grep/Bash on a real repo could otherwise exceed the context
-// window in one shot (e.g. globbing node_modules → millions of tokens).
-const MAX_TOOL_OUTPUT = 60_000
-export function clampToolOutput(s: string): string {
-  if (s.length <= MAX_TOOL_OUTPUT) return s
-  return (
-    s.slice(0, MAX_TOOL_OUTPUT) +
-    `\n\n…[truncated ${s.length - MAX_TOOL_OUTPUT} chars to protect the context window — narrow your query]`
-  )
-}
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
 // which project is active.
@@ -354,6 +345,26 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {},
       required: []
     }
+  },
+  {
+    name: 'dispatch_worker',
+    description:
+      'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: {
+          type: 'string',
+          description: 'The project name (as shown in the registry, e.g. "livana-scanner")'
+        },
+        task: {
+          type: 'string',
+          description: 'A clear, self-contained description of the fix the worker should make'
+        },
+        title: { type: 'string', description: 'Optional PR title (defaults to the task)' }
+      },
+      required: ['project', 'task']
+    }
   }
 ]
 
@@ -575,6 +586,32 @@ async function toolRecallMemory(): Promise<string> {
     : 'No memories saved yet.'
 }
 
+/** Dispatch a worker agent to fix an issue in a registered project and open a gated PR. */
+async function toolDispatchWorker(input: {
+  project: string
+  task: string
+  title?: string
+}): Promise<string> {
+  const projects = listProjects()
+  const match = projects.find(
+    (p) => p.name.toLowerCase() === input.project.trim().toLowerCase()
+  )
+  if (!match) {
+    return `No project named "${input.project}". Registered: ${projects.map((p) => p.name).join(', ') || '(none)'}.`
+  }
+  const result = await runWorker({
+    projectName: match.name,
+    projectPath: match.path,
+    remote: match.remote,
+    task: input.task,
+    title: input.title,
+    label: 'worker'
+  })
+  return result.ok
+    ? `Opened a PR for "${match.name}": ${result.url} (branch ${result.branch}). It's in the review queue for your approval.`
+    : `Worker did not open a PR for "${match.name}": ${result.error}`
+}
+
 /** Cross-repo git overview of every registered project — the morning-review data. */
 async function toolEcosystemStatus(): Promise<string> {
   const projects = listProjects()
@@ -645,6 +682,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       return toolRecallMemory()
     case 'ecosystem_status':
       return toolEcosystemStatus()
+    case 'dispatch_worker':
+      return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:
       throw new Error(`Unknown tool: ${name}`)
   }
