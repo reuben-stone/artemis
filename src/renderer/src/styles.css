@@ -26,13 +26,23 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 0 80px;
+  padding: 0 16px 0 92px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   letter-spacing: 0.12em;
 }
-.brand { color: #9b6bff; font-weight: 600; }
-.titlebar-right { display: flex; align-items: center; gap: 10px; flex: 1; -webkit-app-region: no-drag; }
+.brand { color: #9b6bff; font-weight: 600; margin-right: 22px; }
+/* The bar itself drags the window; only interactive controls opt out (below), so the
+   spacer, gaps, brand and status remain grab-to-drag handles. */
+.titlebar-right { display: flex; align-items: center; gap: 10px; flex: 1; }
+.titlebar-spacer { flex: 1; -webkit-app-region: drag; }
+.project-switch,
+.new-convo,
+.pr-queue-btn,
+.conn-btn,
+.voice-select {
+  -webkit-app-region: no-drag;
+}
 /* icon alignment — lucide renders inline <svg>; flex-center any icon-bearing control */
 .brand,
 .project-switch,
@@ -203,23 +213,29 @@ html, body, #root {
 .projects-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(6, 4, 12, 0.6);
+  backdrop-filter: blur(3px);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding-top: 56px;
   z-index: 80;
   -webkit-app-region: no-drag;
 }
 .projects-panel {
+  /* brighter muted text scoped to modals for clearer contrast */
+  --muted: #a7afc4;
   width: min(560px, 90vw);
-  max-height: 70vh;
+  max-height: 78vh;
   display: flex;
   flex-direction: column;
-  background: #0d0f16;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  background: linear-gradient(180deg, #1b1530 0%, #130f20 100%);
+  border: 1px solid rgba(155, 107, 255, 0.28);
+  border-radius: 16px;
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(155, 107, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
   overflow: hidden;
   animation: rowIn 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
