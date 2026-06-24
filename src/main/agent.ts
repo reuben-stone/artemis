@@ -653,9 +653,16 @@ export async function runAgent(
     // The brain for this turn — Anthropic API, local Ollama, or (later) the
     // subscription CLI — chosen fresh from the backend preference. The loop below
     // is identical regardless of which one we got.
+    // Snapshot history BEFORE persisting this turn's user message, then persist it
+    // exactly once here (the renderer no longer commits it). Done before the model
+    // client call so the message survives even if the client errors (e.g. no key).
+    // buildMessages appends `prompt` to the snapshot, so the model sees the message a
+    // single time — doing both (renderer-commit + buildMessages) caused the double-send.
+    const history = loadRecentMessages(60)
+    appendMessage('user', prompt)
+
     const client = await getModelClient()
     const systemPrompt = await buildSystemPrompt()
-    const history = loadRecentMessages(60)
 
     // Build the canonical message array: history + new user message.
     const localMessages: Anthropic.MessageParam[] = buildMessages(history, prompt)
