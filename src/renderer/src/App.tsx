@@ -6,7 +6,7 @@ import PermissionDialog, { type PermissionReq } from './components/PermissionDia
 import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
-import { ConnectionsPanel } from './components/ConnectionsPanel'
+import { SettingsModal } from './components/SettingsModal'
 import type { Project, PrReview } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
@@ -39,7 +39,7 @@ export default function App() {
   // PR Review Queue — worker-agent PRs awaiting approval.
   const [prs, setPrs] = useState<PrReview[]>([])
   const [showPrs, setShowPrs] = useState(false)
-  const [showConnections, setShowConnections] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -193,16 +193,29 @@ export default function App() {
     setShowProjects(true)
   }, [])
 
-  const openConnections = useCallback(async () => {
+  const openSettings = useCallback(async () => {
     const updated = await window.artemis?.projects?.list()
     if (updated) setProjects(updated)
-    setShowConnections(true)
+    setShowSettings(true)
   }, [])
 
   const setGaProperty = useCallback(async (path: string, propertyId: string) => {
     const updated = await window.artemis?.projects?.setGaProperty(path, propertyId)
     if (updated) setProjects(updated)
   }, [])
+
+  // Settings handlers fed into the modal.
+  const setOllama = useCallback((patch: { ollamaHost?: string; ollamaModel?: string }) => {
+    if (patch.ollamaHost !== undefined) setOllamaHost(patch.ollamaHost)
+    if (patch.ollamaModel !== undefined) setOllamaModel(patch.ollamaModel)
+    window.artemis?.agent?.setBackendConfig(patch)
+  }, [])
+
+  const toggleAutoLaunch = useCallback(() => {
+    window.artemis?.app?.setAutoLaunch(!autoLaunch).then(setAutoLaunch)
+  }, [autoLaunch])
+
+  const toggleTerminal = useCallback(() => setShowTerminal((v) => !v), [])
 
   const pendingPrs = prs.filter((p) => !p.reviewed).length
 
@@ -501,13 +514,27 @@ export default function App() {
       <header className="titlebar">
         <span className="brand">◈ ARTEMIS</span>
         <div className="titlebar-right">
+          {/* Context */}
           <button
             className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
             onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
             title="Switch / manage projects"
           >
-            ▣ {activeProject?.name ?? 'project'}
+            <span className="btn-tag">PROJECT</span>
+            {activeProject?.name ?? '—'}
+            <span className="btn-caret">▾</span>
           </button>
+          <button
+            className="new-convo"
+            onClick={newConversation}
+            title="Start a new conversation (keeps history)"
+          >
+            💬 New chat
+          </button>
+
+          <span className="titlebar-spacer" />
+
+          {/* Actions */}
           <button
             className={`pr-queue-btn ${pendingPrs > 0 ? 'on' : ''}`}
             onClick={() => (showPrs ? setShowPrs(false) : openPrs())}
@@ -517,94 +544,13 @@ export default function App() {
           </button>
           <button
             className="conn-btn"
-            onClick={() => (showConnections ? setShowConnections(false) : openConnections())}
-            title="Connections / setup"
+            onClick={() => (showSettings ? setShowSettings(false) : openSettings())}
+            title="Settings"
           >
             ⚙
           </button>
-          <button
-            className="new-convo"
-            onClick={newConversation}
-            title="New conversation (keeps history)"
-          >
-            ＋ new
-          </button>
-          <button
-            className={`backend-toggle ${backend === 'ollama' ? 'local' : ''}`}
-            onClick={toggleBackend}
-            title={
-              backend === 'ollama'
-                ? 'Local model (Ollama). Click for Cloud (Claude API).'
-                : 'Cloud — Claude API (metered). Click for Local (Ollama).'
-            }
-          >
-            {backend === 'ollama' ? '⌂ Local' : '☁ Cloud'}
-          </button>
-          {backend === 'ollama' ? (
-            <>
-              <input
-                className="ollama-field"
-                value={ollamaHost}
-                onChange={(e) => setOllamaHost(e.target.value)}
-                onBlur={() => window.artemis?.agent?.setBackendConfig({ ollamaHost })}
-                title="Ollama host — localhost, or a brain box e.g. http://192.168.1.20:11434"
-                placeholder="http://localhost:11434"
-                spellCheck={false}
-              />
-              <input
-                className="ollama-field model"
-                value={ollamaModel}
-                onChange={(e) => setOllamaModel(e.target.value)}
-                onBlur={() => window.artemis?.agent?.setBackendConfig({ ollamaModel })}
-                title="Ollama model, e.g. qwen2.5-coder:7b"
-                placeholder="qwen2.5-coder:7b"
-                spellCheck={false}
-              />
-            </>
-          ) : (
-            <button
-              className={`model-toggle ${model === 'claude-opus-4-8' ? 'opus' : ''}`}
-              onClick={toggleModel}
-              title={
-                model === 'claude-opus-4-8'
-                  ? 'Opus 4.8 — max capability (slower, pricier). Click for Sonnet.'
-                  : 'Sonnet 4.6 — fast & efficient. Click for Opus.'
-              }
-            >
-              {model === 'claude-opus-4-8' ? 'Opus' : 'Sonnet'}
-            </button>
-          )}
-          <button
-            className={`term-toggle ${showTerminal ? 'on' : ''}`}
-            onClick={() => setShowTerminal((v) => !v)}
-            title={showTerminal ? 'Hide terminal' : 'Show terminal'}
-          >
-            {'>_'}
-          </button>
-          {voices.length > 0 && (
-            <select
-              className="voice-select"
-              value={selectedVoice}
-              onChange={(e) => {
-                setVoice(e.target.value)
-                previewVoice(e.target.value)
-              }}
-              title="Voice"
-            >
-              {voices.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          )}
-          <button
-            className={`login-toggle ${autoLaunch ? 'on' : ''}`}
-            onClick={() => window.artemis?.app?.setAutoLaunch(!autoLaunch).then(setAutoLaunch)}
-            title="Launch Artemis at login"
-          >
-            {autoLaunch ? '⏻ start at login: on' : '⏻ start at login: off'}
-          </button>
+
+          {/* Status */}
           {cost > 0 && (
             <span className="cost" title="Estimated cost this conversation">
               ${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}
@@ -685,11 +631,26 @@ export default function App() {
         />
       )}
 
-      {showConnections && (
-        <ConnectionsPanel
+      {showSettings && (
+        <SettingsModal
+          model={model}
+          onToggleModel={toggleModel}
+          backend={backend}
+          onToggleBackend={toggleBackend}
+          ollamaHost={ollamaHost}
+          ollamaModel={ollamaModel}
+          onSetOllama={setOllama}
+          voices={voices}
+          selectedVoice={selectedVoice}
+          onSetVoice={setVoice}
+          onPreviewVoice={previewVoice}
+          autoLaunch={autoLaunch}
+          onToggleAutoLaunch={toggleAutoLaunch}
+          showTerminal={showTerminal}
+          onToggleTerminal={toggleTerminal}
           projects={projects}
           onSetGaProperty={setGaProperty}
-          onClose={() => setShowConnections(false)}
+          onClose={() => setShowSettings(false)}
         />
       )}
     </div>
