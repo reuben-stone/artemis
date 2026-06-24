@@ -32,7 +32,17 @@ html, body, #root {
   letter-spacing: 0.12em;
 }
 .brand { color: #9b6bff; font-weight: 600; }
-.titlebar-right { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
+.titlebar-right { display: flex; align-items: center; gap: 10px; flex: 1; -webkit-app-region: no-drag; }
+.titlebar-spacer { flex: 1; }
+/* small dim tag inside a toolbar button, e.g. "PROJECT" */
+.btn-tag {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-right: 5px;
+  opacity: 0.8;
+}
+.btn-caret { color: var(--muted); margin-left: 5px; font-size: 9px; }
 .voice-select {
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -350,6 +360,46 @@ html, body, #root {
 .conn-ga-props { margin: 12px 0 0 18px; display: flex; flex-direction: column; gap: 8px; }
 .conn-ga-row { display: flex; align-items: center; gap: 10px; }
 .conn-ga-name { font-size: 12px; color: var(--text); min-width: 130px; }
+
+/* --- Settings modal --- */
+.settings-modal { width: min(580px, 92vw); }
+.settings-tabs { display: flex; gap: 4px; padding: 10px 14px 0; border-bottom: 1px solid var(--border); }
+.settings-tab {
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 10px 8px;
+  cursor: pointer;
+}
+.settings-tab:hover { color: var(--text); }
+.settings-tab.active { color: var(--text); border-bottom-color: #9b6bff; }
+.settings-body { overflow-y: auto; padding: 6px 16px 16px; }
+.set-field { display: flex; align-items: center; gap: 14px; margin-top: 6px; }
+.set-label { width: 70px; font-size: 12px; color: var(--text); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.seg button {
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.seg button:hover { color: var(--text); }
+.seg button.on { color: var(--text); background: #9b6bff22; }
+.set-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text);
+  padding: 9px 0;
+  cursor: pointer;
+}
+.set-toggle input { accent-color: #9b6bff; cursor: pointer; }
 .cost {
   font-variant-numeric: tabular-nums;
   font-size: 10px;
