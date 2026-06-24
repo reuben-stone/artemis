@@ -14,6 +14,7 @@ const STATE_LABEL: Record<OrbState, string> = {
   thinking: 'Thinking',
   executing: 'Working',
   speaking: 'Speaking',
+  listening: 'Listening',
   error: 'Error'
 }
 
@@ -23,7 +24,11 @@ export default function Chat({
   state,
   voiceOn,
   onToggleVoice,
-  onSend
+  onSend,
+  listening,
+  micSupported,
+  onMic,
+  micHint
 }: {
   messages: Message[]
   busy: boolean
@@ -31,6 +36,10 @@ export default function Chat({
   voiceOn: boolean
   onToggleVoice: () => void
   onSend: (text: string) => void
+  listening: boolean
+  micSupported: boolean
+  onMic: () => void
+  micHint?: string | null
 }) {
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -169,6 +178,8 @@ export default function Chat({
         </button>
       )}
 
+      {micHint && <div className="mic-hint">{micHint}</div>}
+
       <div className="chat-input">
         <button
           className={`voice-toggle ${voiceOn ? 'on' : ''}`}
@@ -177,6 +188,15 @@ export default function Chat({
         >
           {voiceOn ? '🔊' : '🔇'}
         </button>
+        {micSupported && (
+          <button
+            className={`mic-toggle ${listening ? 'on' : ''}`}
+            onClick={onMic}
+            title={listening ? 'Stop listening' : 'Speak to Artemis'}
+          >
+            {listening ? '◉' : '🎤'}
+          </button>
+        )}
         <textarea
           ref={taRef}
           value={draft}

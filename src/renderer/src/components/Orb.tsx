@@ -2,7 +2,7 @@ import { useRef, useMemo, type MutableRefObject } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
-export type OrbState = 'idle' | 'thinking' | 'executing' | 'speaking' | 'error'
+export type OrbState = 'idle' | 'thinking' | 'executing' | 'speaking' | 'listening' | 'error'
 
 // Per-state visual tuning: base color, how fast it churns, how much it breathes.
 const STATE_CONFIG: Record<OrbState, { color: THREE.Color; speed: number; breathe: number }> = {
@@ -12,6 +12,8 @@ const STATE_CONFIG: Record<OrbState, { color: THREE.Color; speed: number; breath
   executing: { color: new THREE.Color('#27e0a8'), speed: 1.2, breathe: 0.06 },
   // active/speaking: rich purple instead of gold
   speaking: { color: new THREE.Color('#a855f7'), speed: 1.0, breathe: 0.10 },
+  // listening: alert cyan, calm but attentive — pulses to the user's voice
+  listening: { color: new THREE.Color('#22d3ee'), speed: 0.5, breathe: 0.07 },
   error: { color: new THREE.Color('#ff4d5e'), speed: 1.8, breathe: 0.12 }
 }
 

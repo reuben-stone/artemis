@@ -5,8 +5,10 @@ import Chat, { type Message } from './components/Chat'
 import PermissionDialog, { type PermissionReq } from './components/PermissionDialog'
 import KeySetup from './components/KeySetup'
 import { useVoice } from './hooks/useVoice'
+import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
 import { splitSpeech, speechFallback } from './agent/speech'
+import { transcribe } from './agent/transcribe'
 
 // The transcript lives in the durable SQLite backbone (main process), so it survives
 // both a renderer hot-reload and a full restart — and isn't capped by localStorage's
@@ -23,6 +25,7 @@ export default function App() {
   const [needsKey, setNeedsKey] = useState(false)
   const [permission, setPermission] = useState<PermissionReq | null>(null)
   const [cost, setCost] = useState(0) // running session cost (USD)
+  const [micHint, setMicHint] = useState<string | null>(null)
 
   const amplitudeRef = useRef(0)
   const { speak, cancel, voices, selectedVoice, setVoice, previewVoice } = useVoice(
@@ -254,6 +257,46 @@ export default function App() {
     [voiceOn, speak]
   )
 
+  // Voice input (Phase 1 — ears). Capture drives the orb amplitude from your live
+  // voice; transcription is a swappable seam (agent/transcribe.ts). On a final
+  // transcript we send it; until the Whisper engine is wired we show a gentle hint.
+  const handleAudio = useCallback(
+    async (samples: Float32Array, sampleRate: number) => {
+      const text = await transcribe(samples, sampleRate)
+      if (text && text.trim()) {
+        setMicHint(null)
+        send(text.trim())
+      } else {
+        setMicHint('Heard you — local voice transcription (Whisper) lands next. Type for now.')
+      }
+    },
+    [send]
+  )
+
+  const speech = useSpeech(amplitudeRef, handleAudio)
+
+  const toggleMic = useCallback(() => {
+    if (speech.listening) speech.stop()
+    else {
+      cancel() // barge-in: stop any TTS so Artemis doesn't talk over you
+      setMicHint(null)
+      void speech.start()
+    }
+  }, [speech, cancel])
+
+  // Reflect listening in the orb; surface mic errors as a hint; auto-clear hints.
+  useEffect(() => {
+    setState((s) => (speech.listening ? 'listening' : s === 'listening' ? 'idle' : s))
+  }, [speech.listening])
+  useEffect(() => {
+    if (speech.error) setMicHint(speech.error)
+  }, [speech.error])
+  useEffect(() => {
+    if (!micHint) return
+    const id = window.setTimeout(() => setMicHint(null), 6000)
+    return () => window.clearTimeout(id)
+  }, [micHint])
+
   const toggleVoice = () => {
     setVoiceOn((v) => {
       if (v) cancel()
@@ -369,6 +412,10 @@ export default function App() {
               voiceOn={voiceOn}
               onToggleVoice={toggleVoice}
               onSend={send}
+              listening={speech.listening}
+              micSupported={speech.supported}
+              onMic={toggleMic}
+              micHint={micHint}
             />
           </div>
         </section>

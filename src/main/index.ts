@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, session, systemPreferences } from 'electron'
 import { join } from 'path'
 import os from 'os'
 import { existsSync } from 'fs'
@@ -43,6 +43,11 @@ function createWindow(): void {
   })
 
   win.on('ready-to-show', () => win.show())
+
+  // Allow microphone capture (voice input, Phase 1); deny other permission requests.
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media')
+  })
 
   win.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -164,6 +169,13 @@ ipcMain.handle('app:setAutoLaunch', (_e, enabled: boolean) => {
 })
 
 app.whenReady().then(() => {
+  // Microphone access for voice input (Phase 1): prompt for OS-level access on macOS,
+  // and approve in-page media permission checks that getUserMedia consults.
+  if (process.platform === 'darwin') {
+    systemPreferences.askForMediaAccess('microphone').catch(() => {})
+  }
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media')
+
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
