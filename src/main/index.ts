@@ -3,13 +3,14 @@ import { join } from 'path'
 import os from 'os'
 import { existsSync } from 'fs'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent, getResyncTurn } from './agent'
+import { runAgent, getResyncTurn, resetSession } from './agent'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 import {
   appendMessage,
   loadRecentMessages,
   appendTerminal,
-  loadTerminalScrollback
+  loadTerminalScrollback,
+  startNewConversation
 } from './store'
 
 // node-pty is a native module; load lazily so a build issue doesn't crash boot.
@@ -139,6 +140,13 @@ ipcMain.handle('agent:run', (e, { requestId, prompt }: { requestId: string; prom
 // After a renderer reload (e.g. a hot-reload of Artemis's own UI) the new page asks
 // the main process whether a turn was in flight, and re-attaches to it.
 ipcMain.handle('agent:resync', () => getResyncTurn())
+
+// "New conversation": drop the SDK session (fresh context) and archive the visible
+// thread by raising the view floor. History stays in the DB.
+ipcMain.handle('agent:newConversation', async () => {
+  await resetSession()
+  startNewConversation()
+})
 
 // --- Auth IPC ---
 ipcMain.handle('auth:status', async () => ({

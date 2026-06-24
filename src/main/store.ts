@@ -71,8 +71,40 @@ function getDb(): Database.Database {
       bytes INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `)
   return db
+}
+
+// --- key/value meta ----------------------------------------------------------
+
+const VIEW_FLOOR = 'view_floor' // messages at/below this id are archived, not shown
+
+function getMeta(key: string): string | null {
+  const row = getDb().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined
+  return row?.value ?? null
+}
+
+function setMeta(key: string, value: string): void {
+  getDb()
+    .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+    .run(key, value)
+}
+
+/**
+ * Start a fresh conversation *view* without deleting anything: raise the view floor
+ * to the current newest message, so loadRecentMessages stops returning the prior
+ * thread. History stays in the DB (archived), recoverable by lowering the floor.
+ */
+export function startNewConversation(): void {
+  const max = (getDb().prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages').get() as { m: number }).m
+  setMeta(VIEW_FLOOR, String(max))
 }
 
 // --- transcript ---------------------------------------------------------------
@@ -84,15 +116,16 @@ export function appendMessage(role: 'user' | 'assistant', text: string): void {
     .run(role, text, Date.now())
 }
 
-/** Load the most recent `limit` messages, oldest-first (for display on boot). */
+/** Load the most recent `limit` messages above the view floor, oldest-first. */
 export function loadRecentMessages(limit = 200): StoredMessage[] {
+  const floor = Number(getMeta(VIEW_FLOOR) ?? '0')
   return getDb()
     .prepare(
       `SELECT role, text FROM (
-         SELECT id, role, text FROM messages ORDER BY id DESC LIMIT ?
+         SELECT id, role, text FROM messages WHERE id > ? ORDER BY id DESC LIMIT ?
        ) ORDER BY id ASC`
     )
-    .all(limit) as StoredMessage[]
+    .all(floor, limit) as StoredMessage[]
 }
 
 // --- in-flight turn (durable across a full restart) ---------------------------

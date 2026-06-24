@@ -3,10 +3,51 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { promises as fs } from 'fs'
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
 import { getApiKey } from './secrets'
 import { saveTurn, loadLastTurn, markTurnClaimed, appendMessage } from './store'
-import { loadMemory } from './memory'
+import { loadMemory, saveMemory } from './memory'
+
+/**
+ * First-class memory tools (Phase 0): an in-process MCP server so the operator can
+ * curate its own persistent memory mid-conversation, not just have it injected at the
+ * start. Surfaced to the model as `mcp__memory__save_memory` / `__recall_memory`.
+ */
+const memoryServer = createSdkMcpServer({
+  name: 'memory',
+  version: '1.0.0',
+  tools: [
+    tool(
+      'save_memory',
+      'Save a durable fact to persistent memory so you remember it across sessions. Use for stable facts about the user, their preferences, projects, or decisions — never ephemeral chatter. Returns the file it was written to.',
+      {
+        name: z.string().describe('short kebab-case slug naming the fact (used as the filename)'),
+        description: z.string().describe('one-line summary, shown in the memory index'),
+        type: z
+          .enum(['user', 'feedback', 'project', 'reference'])
+          .describe('category: who the user is / how to work / ongoing work / external pointer'),
+        body: z.string().describe('the fact itself, in full')
+      },
+      async (args) => {
+        const { file } = await saveMemory(args)
+        return { content: [{ type: 'text', text: `Saved to memory (${file}).` }] }
+      }
+    ),
+    tool(
+      'recall_memory',
+      'Recall everything in persistent memory — the index plus every saved fact. Use to check what you already know about the user or their projects before answering.',
+      {},
+      async () => {
+        const { index, facts } = await loadMemory()
+        const text = facts.length
+          ? `${index.trim()}\n\n${facts.map((f) => f.trim()).join('\n\n---\n\n')}`
+          : 'No memories saved yet.'
+        return { content: [{ type: 'text', text }] }
+      }
+    )
+  ]
+})
 
 /**
  * Artemis's mind: the Claude Agent SDK agentic loop.
@@ -71,7 +112,9 @@ async function buildSystemAppend(): Promise<string> {
         [
           'PERSISTENT MEMORY — durable facts you saved across past sessions. Treat them as',
           'background knowledge about the user and their projects: rely on them, but if one',
-          'names a file/flag/function, verify it still exists before acting on it.',
+          'names a file/flag/function, verify it still exists before acting on it. You can',
+          'curate this yourself: save_memory to store a new durable fact, recall_memory to',
+          'reload everything you know. Save when you learn something stable and worth keeping.',
           '',
           index.trim(),
           '',
@@ -160,6 +203,22 @@ async function saveSessionId(id: string): Promise<void> {
     await fs.writeFile(sessionFile(), JSON.stringify({ sessionId: id }), 'utf8')
   } catch (err) {
     console.error('[artemis] failed to persist session id:', err)
+  }
+}
+
+/**
+ * Drop the current Agent SDK session so the next turn starts with fresh context —
+ * the "new conversation" control. We mark the session as loaded so the old id isn't
+ * re-read from disk, and remove the on-disk id so it doesn't survive a restart.
+ */
+export async function resetSession(): Promise<void> {
+  currentSessionId = null
+  sessionLoaded = true
+  lastTurnId = null
+  try {
+    await fs.unlink(sessionFile())
+  } catch {
+    // no session file to remove — already fresh
   }
 }
 
@@ -273,11 +332,25 @@ export async function runAgent(
             preset: 'claude_code',
             append: systemAppend
           },
-          allowedTools: ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash', 'WebFetch', 'WebSearch'],
+          mcpServers: { memory: memoryServer },
+          allowedTools: [
+            'Read',
+            'Glob',
+            'Grep',
+            'Edit',
+            'Write',
+            'Bash',
+            'WebFetch',
+            'WebSearch',
+            'mcp__memory__save_memory',
+            'mcp__memory__recall_memory'
+          ],
           permissionMode: 'default',
           canUseTool: async (toolName: string, input: Record<string, unknown>) => {
-            // read-only tools run freely
-            if (READ_ONLY.has(toolName)) return { behavior: 'allow', updatedInput: input }
+            // read-only tools and memory curation run freely (no permission prompt)
+            if (READ_ONLY.has(toolName) || toolName.startsWith('mcp__memory__')) {
+              return { behavior: 'allow', updatedInput: input }
+            }
             // refuse obviously destructive shell commands without asking
             if (toolName === 'Bash' && typeof input.command === 'string' && DANGEROUS.test(input.command)) {
               return { behavior: 'deny', message: 'Refused: destructive command blocked by Artemis.' }

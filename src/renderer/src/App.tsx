@@ -22,6 +22,7 @@ export default function App() {
   const [autoLaunch, setAutoLaunch] = useState(false) // defaults off
   const [needsKey, setNeedsKey] = useState(false)
   const [permission, setPermission] = useState<PermissionReq | null>(null)
+  const [cost, setCost] = useState(0) // running session cost (USD)
 
   const amplitudeRef = useRef(0)
   const { speak, cancel, voices, selectedVoice, setVoice, previewVoice } = useVoice(
@@ -172,6 +173,7 @@ export default function App() {
         acc.current += e.token
         if (flushRaf.current == null) flushRaf.current = requestAnimationFrame(flushStream)
       }
+      if (typeof e.cost === 'number') setCost((c) => c + e.cost!)
       if (e.done !== undefined) {
         cancelFlush()
         // `e.done` is already marker-stripped by main; acc may still hold the raw
@@ -259,6 +261,29 @@ export default function App() {
     })
   }
 
+  // New conversation: fresh SDK context + archived transcript view. History is kept
+  // in the DB (the main process just raises the view floor), so nothing is lost.
+  const newConversation = useCallback(async () => {
+    await window.artemis?.agent?.newConversation()
+    cancel()
+    cancelFlush()
+    acc.current = ''
+    activeReq.current = null
+    setBusy(false)
+    setState('idle')
+    setCost(0)
+    const { facts } = (await window.artemis?.memory?.load()) ?? { facts: [] }
+    const greeting =
+      facts.length > 0
+        ? `Fresh start — I still remember ${facts.length} thing${
+            facts.length === 1 ? '' : 's'
+          } about you and our work. What next?`
+        : `Fresh start. What should we do?`
+    setMessages([{ role: 'assistant', text: greeting }])
+    window.artemis?.history?.append('assistant', greeting)
+    if (voiceOnRef.current) setTimeout(() => speak(greeting), 200)
+  }, [cancel, cancelFlush, speak])
+
   if (needsKey) {
     return <KeySetup onDone={() => setNeedsKey(false)} />
   }
@@ -268,6 +293,13 @@ export default function App() {
       <header className="titlebar">
         <span className="brand">◈ ARTEMIS</span>
         <div className="titlebar-right">
+          <button
+            className="new-convo"
+            onClick={newConversation}
+            title="New conversation (keeps history)"
+          >
+            ＋ new
+          </button>
           <button
             className={`term-toggle ${showTerminal ? 'on' : ''}`}
             onClick={() => setShowTerminal((v) => !v)}
@@ -299,6 +331,11 @@ export default function App() {
           >
             {autoLaunch ? '⏻ start at login: on' : '⏻ start at login: off'}
           </button>
+          {cost > 0 && (
+            <span className="cost" title="Estimated cost this conversation">
+              ${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}
+            </span>
+          )}
           <span className={`status status-${state}`}>{state}</span>
         </div>
       </header>
