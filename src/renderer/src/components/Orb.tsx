@@ -6,8 +6,8 @@ export type OrbState = 'idle' | 'thinking' | 'executing' | 'speaking' | 'listeni
 
 // Per-state visual tuning: base color, how fast it churns, how much it breathes.
 const STATE_CONFIG: Record<OrbState, { color: THREE.Color; speed: number; breathe: number }> = {
-  // calm: deep ocean blue, drifting slowly like water
-  idle: { color: new THREE.Color('#2f7dff'), speed: 0.09, breathe: 0.05 },
+  // calm: deep ocean blue, drifting like water — gentle but clearly alive
+  idle: { color: new THREE.Color('#2f7dff'), speed: 0.22, breathe: 0.07 },
   thinking: { color: new THREE.Color('#9b6bff'), speed: 0.8, breathe: 0.08 },
   executing: { color: new THREE.Color('#27e0a8'), speed: 1.2, breathe: 0.06 },
   // active/speaking: rich purple instead of gold
@@ -110,6 +110,7 @@ function OrbMesh({
   amplitudeRef: MutableRefObject<number>
 }) {
   const matRef = useRef<THREE.ShaderMaterial>(null)
+  const meshRef = useRef<THREE.Mesh>(null)
   const colorRef = useRef(STATE_CONFIG[state].color.clone())
   const ampRef = useRef(0)
 
@@ -142,10 +143,16 @@ function OrbMesh({
     u.uSpeed.value += (cfg.speed - u.uSpeed.value) * Math.min(1, dt * 3)
     colorRef.current.lerp(cfg.color, Math.min(1, dt * 3))
     ;(u.uColor.value as THREE.Color).copy(colorRef.current)
+    // A slow, steady spin guarantees visible life even at the calmest idle churn —
+    // and makes any residual rAF throttling obvious (it would stutter, not glide).
+    if (meshRef.current) {
+      meshRef.current.rotation.y += dt * 0.15
+      meshRef.current.rotation.x += dt * 0.04
+    }
   })
 
   return (
-    <mesh>
+    <mesh ref={meshRef}>
       <icosahedronGeometry args={[1.1, 24]} />
       <shaderMaterial
         ref={matRef}
