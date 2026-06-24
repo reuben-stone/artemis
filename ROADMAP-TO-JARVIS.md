@@ -125,8 +125,10 @@ brain (level 2) remains future work, slated alongside Phase 6.
 
 - ✅ **Capture foundation** — `useSpeech` grabs the mic, pulses the orb to your live voice, records, and emits mono 16kHz Float32 samples through a swappable `transcribe()` seam. Mic button + `listening` orb state + main-process mic permissions.
 - ✅ **Barge-in** — starting to listen cancels in-progress TTS.
-- ✅ **Speech-to-text engine** — local Whisper (`whisper-tiny.en`) via transformers.js in a Web Worker (`agent/whisper.worker.ts`). Model downloads once from the HF hub, then browser-cached (offline after). Builds clean; **pending a live restart to confirm runtime** (model fetch + mic).
-  - *CSP note:* needed a scoped relaxation in `index.html` — `wasm-unsafe-eval` + `connect-src` to the HF hub & jsDelivr (onnxruntime WASM). **Tightening path: vendor the model + WASM into the app to drop the remote `connect-src` and restore a strict CSP (true offline-first).**
+- ✅ **Speech-to-text engine — WORKING (verified live 2026-06-24).** Local Whisper (`whisper-tiny.en`, **`dtype: 'fp32'`**) via transformers.js in a Web Worker (`agent/whisper.worker.ts`). Spoke into the mic → transcribed → sent, end to end. Model downloads once from the HF hub, then browser-cached (offline after).
+  - *Why fp32:* the wasm-default `q8` decoder ships broken 4-bit (`MatMulNBits`) ops onnxruntime-web can't build a session from. `fp32` is unquantized and fully supported — larger/slower but reliable.
+  - *CSP note:* needed a scoped relaxation in `index.html` — `wasm-unsafe-eval` + `connect-src` to the HF hub (`*.huggingface.co`) & jsDelivr (onnxruntime WASM). **Tightening path: vendor the model + WASM into the app to drop the remote `connect-src` and restore a strict CSP (true offline-first).**
+  - *Optimize next:* fp32 is heavy — explore a quantized variant that builds cleanly (q8/int8 that avoids MatMulNBits), WebGPU, or `whisper-base.en`; measure latency.
 - ◻︎ **Wake word** ("Artemis…") for hands-free activation.
 - ◻︎ **Voice activity detection** so it knows when you've finished a thought (auto-stop) — pairs well with upgrading `whisper-tiny.en` → `base` for accuracy.
 - **Done when:** you can hold a spoken back-and-forth, hands-free, and interrupt naturally.
