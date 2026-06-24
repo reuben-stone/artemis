@@ -84,6 +84,17 @@ function getDb(): Database.Database {
       remote TEXT,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS pr_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      branch TEXT,
+      agent TEXT,
+      reviewed INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
   `)
   return db
 }
@@ -246,6 +257,65 @@ export function getActiveProject(): Project | null {
       .prepare('SELECT id, name, path, remote FROM projects WHERE path = ?')
       .get(path) as Project | undefined) ?? null
   )
+}
+
+// --- PR Review Queue (worker-agent output, human-approval surface) ------------
+
+export interface PrReview {
+  id: number
+  project: string
+  title: string
+  url: string
+  branch: string | null
+  agent: string | null
+  reviewed: boolean
+  created_at: number
+}
+
+/** Log a PR a worker agent opened, for the human to review later. */
+export function addPrReview(r: {
+  project: string
+  title: string
+  url: string
+  branch?: string | null
+  agent?: string | null
+}): PrReview {
+  const db = getDb()
+  const info = db
+    .prepare(
+      'INSERT INTO pr_reviews (project, title, url, branch, agent, reviewed, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)'
+    )
+    .run(r.project, r.title, r.url, r.branch ?? null, r.agent ?? null, Date.now())
+  return db
+    .prepare('SELECT * FROM pr_reviews WHERE id = ?')
+    .get(info.lastInsertRowid) as PrReview
+}
+
+/** PRs awaiting review first (newest), then recently-reviewed for reference. */
+export function listPrReviews(): PrReview[] {
+  return (
+    getDb()
+      .prepare('SELECT * FROM pr_reviews ORDER BY reviewed ASC, created_at DESC')
+      .all() as Array<Record<string, unknown>>
+  ).map((row) => ({
+    id: row.id as number,
+    project: row.project as string,
+    title: row.title as string,
+    url: row.url as string,
+    branch: (row.branch as string) ?? null,
+    agent: (row.agent as string) ?? null,
+    reviewed: !!row.reviewed,
+    created_at: row.created_at as number
+  }))
+}
+
+export function setPrReviewed(id: number, reviewed: boolean): void {
+  getDb().prepare('UPDATE pr_reviews SET reviewed = ? WHERE id = ?').run(reviewed ? 1 : 0, id)
+}
+
+/** Drop reviewed rows (a "clear done" action for the queue). */
+export function clearReviewedPrs(): void {
+  getDb().prepare('DELETE FROM pr_reviews WHERE reviewed = 1').run()
 }
 
 /** Seed Artemis's own repo as a project on first run so the switcher is never empty. */

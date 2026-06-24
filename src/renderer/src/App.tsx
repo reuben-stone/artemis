@@ -5,7 +5,8 @@ import Chat, { type Message } from './components/Chat'
 import PermissionDialog, { type PermissionReq } from './components/PermissionDialog'
 import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
-import type { Project } from '../../preload'
+import { PrReviewQueue } from './components/PrReviewQueue'
+import type { Project, PrReview } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
@@ -34,6 +35,9 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [showProjects, setShowProjects] = useState(false)
   const [projectsBusy, setProjectsBusy] = useState(false)
+  // PR Review Queue — worker-agent PRs awaiting approval.
+  const [prs, setPrs] = useState<PrReview[]>([])
+  const [showPrs, setShowPrs] = useState(false)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -157,6 +161,23 @@ export default function App() {
   }, [])
 
   const activeProject = projects.find((p) => p.active)
+
+  // PR Review Queue: load on boot, and the toggle/clear handlers.
+  useEffect(() => {
+    window.artemis?.prReviews?.list().then((p) => p && setPrs(p))
+  }, [])
+
+  const togglePr = useCallback(async (id: number, reviewed: boolean) => {
+    const updated = await window.artemis?.prReviews?.setReviewed(id, reviewed)
+    if (updated) setPrs(updated)
+  }, [])
+
+  const clearReviewedPrs = useCallback(async () => {
+    const updated = await window.artemis?.prReviews?.clearReviewed()
+    if (updated) setPrs(updated)
+  }, [])
+
+  const pendingPrs = prs.filter((p) => !p.reviewed).length
 
   // Restore the transcript from the SQLite backbone; only greet on a genuinely fresh
   // start. Then reattach to any turn that was in flight when we (re)loaded.
@@ -461,6 +482,13 @@ export default function App() {
             ▣ {activeProject?.name ?? 'project'}
           </button>
           <button
+            className={`pr-queue-btn ${pendingPrs > 0 ? 'on' : ''}`}
+            onClick={() => setShowPrs((v) => !v)}
+            title="PR review queue"
+          >
+            ⎇ PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
+          </button>
+          <button
             className="new-convo"
             onClick={newConversation}
             title="New conversation (keeps history)"
@@ -611,6 +639,15 @@ export default function App() {
           onRemove={removeProject}
           onSelect={selectProject}
           onClose={() => setShowProjects(false)}
+        />
+      )}
+
+      {showPrs && (
+        <PrReviewQueue
+          prs={prs}
+          onToggle={togglePr}
+          onClearReviewed={clearReviewedPrs}
+          onClose={() => setShowPrs(false)}
         />
       )}
     </div>

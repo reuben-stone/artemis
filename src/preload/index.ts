@@ -11,6 +11,17 @@ export interface Project {
   gh: { slug: string; url: string } | null
 }
 
+export interface PrReview {
+  id: number
+  project: string
+  title: string
+  url: string
+  branch: string | null
+  agent: string | null
+  reviewed: boolean
+  created_at: number
+}
+
 const api = {
   terminal: {
     spawn: (opts: { cols: number; rows: number }) =>
@@ -69,6 +80,13 @@ const api = {
     add: (): Promise<Project[]> => ipcRenderer.invoke('projects:add'),
     remove: (id: number): Promise<Project[]> => ipcRenderer.invoke('projects:remove', id),
     setActive: (path: string): Promise<Project[]> => ipcRenderer.invoke('projects:setActive', path)
+  },
+  // PR Review Queue — worker-agent PRs awaiting the human's approval.
+  prReviews: {
+    list: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:list'),
+    setReviewed: (id: number, reviewed: boolean): Promise<PrReview[]> =>
+      ipcRenderer.invoke('prReviews:setReviewed', { id, reviewed }),
+    clearReviewed: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:clearReviewed')
   },
   agent: {
     run: (requestId: string, prompt: string): Promise<void> =>
