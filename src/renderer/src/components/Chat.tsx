@@ -47,20 +47,24 @@ export interface Message {
   tools?: ToolStep[]
   /** Data-URL thumbnails of images attached to a user turn (display only). */
   images?: string[]
+  /** Names of non-image documents (e.g. PDFs) attached to a user turn (display only). */
+  docs?: string[]
 }
 
-/** An image attachment sent with a turn: base64 for the model, dataUrl for display. */
-export interface OutImage {
+/** A media attachment sent with a turn: base64 for the model, dataUrl/name for display. */
+export interface OutMedia {
+  kind: 'image' | 'document'
   mediaType: string
   data: string
   dataUrl: string
+  name: string
 }
 
 interface Attachment {
   id: string
-  kind: 'image' | 'text'
+  kind: 'image' | 'text' | 'pdf'
   name: string
-  // image
+  // image / pdf (binary)
   mediaType?: string
   data?: string
   dataUrl?: string
@@ -83,6 +87,18 @@ function readAttachment(file: File): Promise<Attachment | null> {
         const dataUrl = String(r.result)
         const data = dataUrl.split(',')[1] ?? ''
         resolve({ id, kind: 'image', name: file.name || 'image', mediaType: file.type, data, dataUrl })
+      }
+      r.onerror = () => resolve(null)
+      r.readAsDataURL(file)
+    })
+  }
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+    return new Promise((resolve) => {
+      const r = new FileReader()
+      r.onload = () => {
+        const dataUrl = String(r.result)
+        const data = dataUrl.split(',')[1] ?? ''
+        resolve({ id, kind: 'pdf', name: file.name || 'document.pdf', mediaType: 'application/pdf', data, dataUrl })
       }
       r.onerror = () => resolve(null)
       r.readAsDataURL(file)
@@ -137,7 +153,7 @@ export default function Chat({
   state: OrbState
   voiceOn: boolean
   onToggleVoice: () => void
-  onSend: (text: string, images?: OutImage[]) => void
+  onSend: (text: string, media?: OutMedia[]) => void
   onQueue?: (text: string) => void
   onStop?: () => void
   queueCount?: number
@@ -228,9 +244,15 @@ export default function Chat({
       parts.push(`File: ${f.name}\n\`\`\`\n${f.text}\n\`\`\``)
     }
     const outText = parts.join('\n\n')
-    const images: OutImage[] = attachments
-      .filter((a) => a.kind === 'image')
-      .map((a) => ({ mediaType: a.mediaType!, data: a.data!, dataUrl: a.dataUrl! }))
+    const media: OutMedia[] = attachments
+      .filter((a) => a.kind === 'image' || a.kind === 'pdf')
+      .map((a) => ({
+        kind: a.kind === 'pdf' ? 'document' : 'image',
+        mediaType: a.mediaType!,
+        data: a.data!,
+        dataUrl: a.dataUrl!,
+        name: a.name
+      }))
 
     if (busy) {
       // The barge-in queue is text-only; attachments can't ride along.
@@ -239,7 +261,7 @@ export default function Chat({
       setAttachments([])
       return
     }
-    onSend(outText, images.length ? images : undefined)
+    onSend(outText, media.length ? media : undefined)
     setDraft('')
     setAttachments([])
     stick.current = true
@@ -289,6 +311,15 @@ export default function Chat({
                     <div className="msg-images">
                       {m.images.map((src, k) => (
                         <img key={k} src={src} className="msg-image" alt="attachment" />
+                      ))}
+                    </div>
+                  )}
+                  {m.docs && m.docs.length > 0 && (
+                    <div className="msg-docs">
+                      {m.docs.map((name, k) => (
+                        <span key={k} className="msg-doc">
+                          <FileText size={13} /> {name}
+                        </span>
                       ))}
                     </div>
                   )}
@@ -420,7 +451,7 @@ export default function Chat({
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*,text/*,.md,.json,.log,.csv,.ts,.tsx,.js,.jsx,.py,.go,.yaml,.yml,.toml"
+          accept="image/*,application/pdf,.pdf,text/*,.md,.json,.log,.csv,.ts,.tsx,.js,.jsx,.py,.go,.yaml,.yml,.toml"
           style={{ display: 'none' }}
           onChange={(e) => {
             if (e.target.files?.length) void addFiles(e.target.files)
