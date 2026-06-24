@@ -19,6 +19,7 @@
     "@xterm/xterm": "^5.5.0",
     "better-sqlite3": "^12.11.1",
     "glob": "^11.1.0",
+    "lucide-react": "^1.21.0",
     "node-pty": "^1.0.0",
     "react-markdown": "^10.1.0",
     "remark-breaks": "^4.0.0",

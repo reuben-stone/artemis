@@ -1,3 +1,4 @@
+import { X, ExternalLink, CircleDot, Circle } from 'lucide-react'
 import type { Project } from '../../../preload'
 
 /**
@@ -30,7 +31,7 @@ export function ProjectsPanel({
               {busy ? '…' : '+ Add folder(s)'}
             </button>
             <button className="projects-close" onClick={onClose} title="Close">
-              ✕
+              <X size={14} />
             </button>
           </div>
         </div>
@@ -47,7 +48,9 @@ export function ProjectsPanel({
               title={p.active ? 'Active project' : 'Click to make active'}
             >
               <div className="project-main">
-                <span className="project-dot">{p.active ? '●' : '○'}</span>
+                <span className="project-dot">
+                  {p.active ? <CircleDot size={13} /> : <Circle size={13} />}
+                </span>
                 <span className="project-name">{p.name}</span>
                 {p.branch && (
                   <span className={`project-branch ${p.dirty ? 'dirty' : ''}`}>
@@ -63,7 +66,7 @@ export function ProjectsPanel({
                   }}
                   title="Remove from Artemis (does not delete the folder)"
                 >
-                  ×
+                  <X size={14} />
                 </button>
               </div>
               <div className="project-sub">
@@ -76,7 +79,7 @@ export function ProjectsPanel({
                     rel="noreferrer"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {p.gh.slug} ↗
+                    {p.gh.slug} <ExternalLink size={11} />
                   </a>
                 )}
               </div>
