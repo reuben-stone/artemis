@@ -57,4 +57,18 @@ export async function transcribe(
   }
 }
 
+/**
+ * Kick off model load WITHOUT transcribing, so the first real transcription doesn't pay
+ * the download/build cost. Fire-and-forget — safe to call repeatedly (the worker caches
+ * the pipeline). Triggered when the user enables the mic.
+ */
+export function warmTranscriber(): void {
+  try {
+    const w = getWorker()
+    w.postMessage({ id: ++seq, warm: true })
+  } catch {
+    // worker unavailable — the next transcribe() will load lazily as before
+  }
+}
+
 export const transcriberReady = true

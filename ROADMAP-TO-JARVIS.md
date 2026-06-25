@@ -265,7 +265,13 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 - ✅ Barge-in — starting to listen cancels in-progress TTS
 - ✅ **Local Whisper STT — VERIFIED LIVE (2026-06-24)** — `whisper-tiny.en`, `dtype: 'fp32'` (WASM default `q8` has broken MatMulNBits ops), transformers.js Web Worker, model cached in browser after first download
 - ✅ Text barge-in — type and send while mid-turn; queues and drains FIFO
-- ◻︎ **STT optimization** — fp32 is heavy; try `q8` with latest transformers.js (may be fixed); benchmark; consider `whisper-base.en`. WebGPU is *not* faster than WASM for Whisper on M-series currently (counterintuitive but benchmarked — revisit Q4 2026).
+- 🟡 **STT optimization (IN PROGRESS 2026-06-25)** — the worker now tries `q8` first
+  (≈4× smaller + faster on WASM) and **falls back to fp32** if its decoder won't build
+  (validated by a tiny silent inference at load), and **warms the model when the mic is
+  enabled** so the first transcription isn't slow. *Needs live confirmation that q8 builds
+  on the current runtime and is actually faster.* Still open: multi-threaded WASM (needs
+  COOP/COEP isolation), `whisper-base.en` (more accurate, slower). WebGPU is *not* faster
+  than WASM for Whisper on M-series currently (revisit Q4 2026).
 - ◻︎ **Wake word** ("Artemis…") for hands-free activation
 - ◻︎ **Voice activity detection** — auto-stop when you finish speaking; pairs with upgrading to `whisper-base.en` for accuracy
 - ◻︎ **Vendor model + WASM** into the app bundle (true offline; drops remote `connect-src` from CSP)
