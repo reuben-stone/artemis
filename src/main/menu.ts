@@ -12,6 +12,9 @@ export function buildAppMenu(): void {
   const newChat = (): void => {
     BrowserWindow.getFocusedWindow()?.webContents.send('menu:new-chat')
   }
+  const openSettings = (): void => {
+    BrowserWindow.getFocusedWindow()?.webContents.send('menu:settings')
+  }
 
   const template: MenuItemConstructorOptions[] = [
     ...(isMac
@@ -20,6 +23,8 @@ export function buildAppMenu(): void {
             label: 'Artemis',
             submenu: [
               { role: 'about', label: 'About Artemis' },
+              { type: 'separator' },
+              { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: openSettings },
               { type: 'separator' },
               { role: 'hide', label: 'Hide Artemis' },
               { role: 'hideOthers' },
@@ -35,7 +40,12 @@ export function buildAppMenu(): void {
       submenu: [
         { label: 'New Chat', accelerator: 'CmdOrCtrl+Shift+N', click: newChat },
         { type: 'separator' },
-        ...(isMac ? ([{ role: 'close' }] as MenuItemConstructorOptions[]) : []),
+        ...(isMac
+          ? ([{ role: 'close' }] as MenuItemConstructorOptions[])
+          : ([
+              { label: 'Settings…', accelerator: 'Ctrl+,', click: openSettings },
+              { type: 'separator' }
+            ] as MenuItemConstructorOptions[])),
         { role: 'quit', label: isMac ? 'Quit Artemis' : 'Quit' }
       ]
     },
