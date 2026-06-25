@@ -10,6 +10,7 @@ import { SettingsModal } from './components/SettingsModal'
 import { BriefingCard } from './components/BriefingCard'
 import { HudRail } from './components/HudRail'
 import { CalendarView } from './components/CalendarView'
+import { Tooltip } from './components/Tooltip'
 import { CommandPalette, type Command } from './components/CommandPalette'
 import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign, Shield, ShieldCheck, ShieldAlert } from 'lucide-react'
 import type { Project, PrReview, GaProp, BriefingData, PermissionDecision, PermissionState } from '../../preload'
@@ -23,6 +24,13 @@ import { transcribe, warmTranscriber } from './agent/transcribe'
 // both a renderer hot-reload and a full restart — and isn't capped by localStorage's
 // ~5MB quota. The renderer commits its own messages (user input, greeting,
 // remember-acks); the operator commits assistant replies from main.
+
+// Human-readable explanation of each permission posture, shown in the toggle's tooltip.
+const PERM_DESC: Record<string, string> = {
+  guarded: 'Asks before every command that writes or runs.',
+  smart: 'Safe read-only commands (ls, git status, date…) run without asking; writes and anything risky still prompt.',
+  trusted: 'Auto-runs everything except hard-dangerous commands — this session only, resets on restart.'
+}
 
 export default function App() {
   const [state, setState] = useState<OrbState>('idle')
@@ -758,20 +766,24 @@ export default function App() {
           >
             <MessageSquarePlus size={14} /> New chat
           </button>
-          <button
-            className={`perm-btn perm-${effectivePerm}`}
-            onClick={() => void cyclePermission()}
-            title={
-              effectivePerm === 'guarded'
-                ? 'Permissions: Guarded — Artemis asks before every command. Click for Smart.'
-                : effectivePerm === 'smart'
-                  ? 'Permissions: Smart — safe read-only commands run without asking. Click for Trusted (this session).'
-                  : 'Permissions: Trusted (this session) — auto-runs everything except hard-dangerous commands. Click to return to Guarded.'
+          <Tooltip
+            placement="bottom"
+            align="end"
+            content={
+              <>
+                <div className={`tip-title ${effectivePerm}`}>
+                  Permissions · {effectivePerm === 'trusted' ? 'Trusted (session)' : effectivePerm}
+                </div>
+                <div>{PERM_DESC[effectivePerm]}</div>
+                <div className="tip-hint">Click to cycle: Guarded → Smart → Trusted</div>
+              </>
             }
           >
-            {effectivePerm === 'guarded' ? <Shield size={14} /> : effectivePerm === 'smart' ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
-            <span className="btn-tag">{effectivePerm}</span>
-          </button>
+            <button className={`perm-btn perm-${effectivePerm}`} onClick={() => void cyclePermission()}>
+              {effectivePerm === 'guarded' ? <Shield size={14} /> : effectivePerm === 'smart' ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+              <span className="btn-tag">{effectivePerm}</span>
+            </button>
+          </Tooltip>
           <button
             className="conn-btn"
             onClick={() => (showSettings ? setShowSettings(false) : openSettings())}
