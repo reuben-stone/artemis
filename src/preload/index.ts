@@ -258,6 +258,8 @@ const api = {
           status?: 'ok' | 'error' | 'denied'
           output?: string
         }
+        // Agent-driven UI: the agent asked to open a panel in the face.
+        ui?: { panel: string }
       }) => void
     ) => {
       const handler = (_e: unknown, payload: any) => cb(payload)
