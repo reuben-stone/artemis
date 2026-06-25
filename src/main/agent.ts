@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { app } from 'electron'
+import { app, clipboard } from 'electron'
 import { join, dirname, resolve } from 'path'
 import { promises as fs } from 'fs'
 import { exec } from 'child_process'
@@ -375,6 +375,16 @@ const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'read_clipboard',
+    description:
+      "Read the user's current clipboard text. Use when they refer to something they just copied — 'what did I copy', 'summarize what's on my clipboard', or 'fix this' right after copying code. Returns the clipboard text (or notes if it holds an image instead). Permission-gated, since the clipboard may contain secrets.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: []
+    }
+  },
+  {
     name: 'dispatch_worker',
     description:
       'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
@@ -653,6 +663,21 @@ async function checkOnline(): Promise<boolean> {
   }
 }
 
+/** Read the user's clipboard text (permission-gated — may hold secrets). */
+function toolReadClipboard(): string {
+  const text = clipboard.readText()
+  if (text && text.trim()) {
+    const clamped =
+      text.length > 8000 ? `${text.slice(0, 8000)}\n…[${text.length - 8000} more chars]` : text
+    return `Clipboard text (${text.length} chars):\n\n${clamped}`
+  }
+  const img = clipboard.readImage()
+  if (img && !img.isEmpty()) {
+    return 'The clipboard holds an image, not text. Ask the user to paste it into the chat — it attaches as an image you can see.'
+  }
+  return 'The clipboard is empty (no text).'
+}
+
 /** Read the local PR Review Queue — worker-agent PRs awaiting the user's approval. */
 function toolPrQueue(): string {
   const prs = listPrReviews()
@@ -818,6 +843,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       return toolSystemContext()
     case 'pr_queue':
       return toolPrQueue()
+    case 'read_clipboard':
+      return toolReadClipboard()
     case 'dispatch_worker':
       return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:

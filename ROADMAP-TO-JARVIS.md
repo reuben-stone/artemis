@@ -240,13 +240,22 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
   "what did we discuss last time?" / "what were we working on yesterday?" returns a
   real, accurate summary of the archived thread, not "that's out of my context."
 
-## Phase 4 — Senses 🔴
+## Phase 4 — Senses 🔴  ← ✅ SUBSTANTIALLY DONE (2026-06-25)
 *See what you see.*
 
-- **Screen awareness** — capture active window/region on request, reason over it (vision models)
-- **File drag-and-drop** into chat — images, PDFs, code
-- **Clipboard / selection** awareness as opt-in context
-- **Done when:** "what's this error?" and Artemis already sees your screen
+- ✅ **File drag-and-drop / paste / paperclip** into chat — images (vision), PDFs (document
+  blocks), text/code (inlined). Sent as multimodal content to the cloud model.
+- ✅ **Screen capture** on request — `desktopCapturer` source picker → still flows in as an
+  image attachment. (macOS Screen Recording permission; in dev attributed to the terminal,
+  clean as "Artemis" in the packaged app.)
+- ✅ **OS-context awareness** (`system_context` tool) — time, machine, active project,
+  frontmost app, battery, network.
+- ✅ **Clipboard read** (`read_clipboard` tool) — current clipboard text; permission-gated.
+- ◻︎ **Webcam / presence** — deferred (low value for the mission; needs Camera permission).
+- ◻︎ **Continuous variants** (watch screen/clipboard/filesystem, always-listen) — deferred to
+  the sidecar (need the always-on daemon).
+- **Done when:** "what's this error?" works with a captured screen — ✅ for on-demand;
+  always-on watching waits on the sidecar.
 
 ## Phase 5 — Hands and reach 🔴
 *Act beyond the repo.*
