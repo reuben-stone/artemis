@@ -217,6 +217,14 @@ const api = {
       sourceId: string
     ): Promise<{ dataUrl: string; mediaType: string; name: string } | null> =>
       ipcRenderer.invoke('screen:capture', sourceId)
+  },
+  menu: {
+    // Fires when the native File ▸ New Chat menu item is chosen.
+    onNewChat: (cb: () => void) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('menu:new-chat', handler)
+      return () => ipcRenderer.removeListener('menu:new-chat', handler)
+    }
   }
 }
 

@@ -15,6 +15,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
 import { runAgent, cancelTurn, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
+import { buildAppMenu } from './menu'
 import { gatherBriefing } from './briefing'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 import { parseGitRemote } from './github'
@@ -433,6 +434,7 @@ app.whenReady().then(() => {
 
   ensureSelfProject() // seed Artemis's own repo so the project switcher is never empty
 
+  buildAppMenu() // real File/Edit/View/Window menus with a working Quit
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

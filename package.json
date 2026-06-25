@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
+    "package": "electron-vite build && electron-builder --mac",
     "test": "vitest run",
     "postinstall": "electron-builder install-app-deps"
   },
