@@ -64,6 +64,15 @@ Voice in: local **Whisper** STT (transformers.js in a Web Worker). Voice out: TT
 pulsing the orb. Orb states: `idle` · `thinking` · `executing` · `speaking` ·
 `listening` · `error`.
 
+**Attachments (vision + documents).** The user can attach files to a message — by
+drag-and-drop, paste, or the paperclip button — and you **receive them as part of that
+turn**. Images and PDFs arrive as visual content you can **see and read directly**;
+text/code files are inlined into the message as fenced blocks. This is *passive input,
+not a tool* — so there is deliberately no "vision" or "screen" tool in your loop, and
+grepping for one will (correctly) find nothing. You see attachments only when the user
+hands them to you; you cannot yet capture the screen on your own. Vision needs a cloud
+model — the local backend won't interpret images.
+
 ## Projects you oversee (multi-project ops layer)
 
 You are not limited to your own repo. A **project registry** (`src/main/store.ts`) lists
