@@ -20,6 +20,13 @@ mac:
   category: public.app-category.developer-tools
   # Drop a 1024x1024 build/icon.png (or build/icon.icns) for a custom Dock icon;
   # without one, electron-builder uses the default Electron icon.
+  #
+  # Stable self-signed identity (run scripts/setup-self-signing.sh once) so rebuilds
+  # keep the same signature → macOS persists Screen Recording permission + safeStorage
+  # secrets across updates. Swap for a real "Developer ID Application: …" later.
+  identity: Artemis Self-Signed
+  hardenedRuntime: false
+  gatekeeperAssess: false
   target:
     - dir
   artifactName: ${productName}.${ext}

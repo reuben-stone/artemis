@@ -73,6 +73,20 @@ once), Artemis inherits it. Otherwise add an Anthropic API key in **Settings →
 Connect **GitHub** with `gh auth login`, and **Google Analytics** by adding a GA4
 service-account JSON + per-project property id in the same panel.
 
+### Packaging a real app
+
+```bash
+bash scripts/setup-self-signing.sh   # once: create a stable self-signed identity
+npm run package                      # → release/mac/Artemis.app  (drag to /Applications)
+```
+
+The self-signing step keeps the app's signature stable across rebuilds, so macOS
+**persists Screen Recording permission and saved secrets** (API key, GA creds) through
+updates. The packaged app keeps its own data (`~/Library/Application Support/Artemis/`),
+separate from the dev instance. Replace the self-signed identity with a real Apple
+Developer ID (set `mac.identity` in `electron-builder.yml`) once available, then add
+notarization. Custom Dock icon: drop a 1024×1024 `build/icon.png`.
+
 ## Roadmap
 
 Direction and phases live in **[ROADMAP-TO-JARVIS.md](./ROADMAP-TO-JARVIS.md)** — the goal
