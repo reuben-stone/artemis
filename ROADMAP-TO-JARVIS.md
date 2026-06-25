@@ -317,6 +317,24 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 
 ---
 
+## Distribution & auto-update (planned)
+
+Today Artemis is built locally and **self-signed** — fine for one machine (see the README),
+but shipping it to *other people* needs two things, both gated on a **Livana Apple Developer
+account**:
+
+- **Code signing + notarization (Developer ID).** Self-signed apps are blocked/warned by
+  Gatekeeper on anyone else's Mac. A notarized Developer ID build opens cleanly. This is the
+  hard prerequisite for any external distribution.
+- **Auto-update (`electron-updater`).** Publish releases to a feed (GitHub Releases is
+  simplest; S3 / generic server also work); the installed app checks the feed, downloads new
+  versions in the background, and installs on relaunch. Note: auto-update only keeps an
+  *already-installed* app current — the **initial** download is still an external link
+  (website / Releases page), not an in-app channel.
+
+Order: Developer ID + notarization first (so others can run it at all), then electron-updater
+on top. Until the developer account exists, self-signed builds are personal-use only.
+
 ## Current sprint
 
 1. ✅ ~~Graceful restart (cornerstone level 1)~~
