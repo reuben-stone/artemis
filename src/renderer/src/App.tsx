@@ -508,11 +508,16 @@ export default function App() {
   // transcript we send it; until the Whisper engine is wired we show a gentle hint.
   const handleAudio = useCallback(
     async (samples: Float32Array, sampleRate: number) => {
-      setMicHint('Transcribing… (the first time downloads the model — can take a minute)')
+      // The "downloads the model" note is only true the first time — the model is then
+      // cached in the browser across restarts, so a localStorage flag mirrors that and we
+      // drop the scary copy on every subsequent transcription.
+      const warmed = localStorage.getItem('artemis.whisper.ready') === '1'
+      setMicHint(warmed ? 'Transcribing…' : 'Transcribing… (first run downloads the model — can take a minute)')
       setState('thinking')
       const { text, error } = await transcribe(samples, sampleRate)
       setState('idle')
       if (text && text.trim()) {
+        localStorage.setItem('artemis.whisper.ready', '1')
         setMicHint(null)
         send(text.trim())
       } else {
