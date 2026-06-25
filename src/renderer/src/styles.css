@@ -60,6 +60,7 @@ html, body, #root {
 .titlebar-spacer { flex: 1; -webkit-app-region: drag; }
 /* uniform height so every control sits on the same vertical line */
 .titlebar-right > button,
+.titlebar-right > .tip-wrap > button,
 .titlebar-right > .status {
   height: 26px;
   display: inline-flex;

@@ -731,41 +731,42 @@ export default function App() {
         </span>
         <div className="titlebar-right">
           {/* Left: context */}
-          <button
-            className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
-            onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
-            title="Switch / manage projects"
-          >
-            <FolderGit2 size={13} />
-            <span className="btn-tag">PROJECT</span>
-            {activeProject?.name ?? '—'}
-            <ChevronDown size={12} className="btn-caret" />
-          </button>
-          <button
-            className={`pr-queue-btn ${pendingPrs > 0 ? 'on' : ''}`}
-            onClick={() => (showPrs ? setShowPrs(false) : openPrs())}
-            title="PR review queue"
-          >
-            <GitPullRequest size={14} /> PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
-          </button>
-          <button
-            className={`pr-queue-btn ${showBriefing ? 'on' : ''}`}
-            onClick={() => (showBriefing ? setShowBriefing(false) : openBriefing())}
-            title="Run / show the ecosystem briefing"
-          >
-            <Sunrise size={14} /> Briefing
-          </button>
+          <Tooltip placement="bottom" align="start" content="Switch / manage the repos Artemis oversees">
+            <button
+              className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
+              onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
+            >
+              <FolderGit2 size={13} />
+              <span className="btn-tag">PROJECT</span>
+              {activeProject?.name ?? '—'}
+              <ChevronDown size={12} className="btn-caret" />
+            </button>
+          </Tooltip>
+          <Tooltip placement="bottom" content="PR review queue — worker-agent PRs awaiting your approval">
+            <button
+              className={`pr-queue-btn ${pendingPrs > 0 ? 'on' : ''}`}
+              onClick={() => (showPrs ? setShowPrs(false) : openPrs())}
+            >
+              <GitPullRequest size={14} /> PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
+            </button>
+          </Tooltip>
+          <Tooltip placement="bottom" content="Run / show the cross-repo ecosystem briefing">
+            <button
+              className={`pr-queue-btn ${showBriefing ? 'on' : ''}`}
+              onClick={() => (showBriefing ? setShowBriefing(false) : openBriefing())}
+            >
+              <Sunrise size={14} /> Briefing
+            </button>
+          </Tooltip>
 
           <span className="titlebar-spacer" />
 
           {/* Right: primary action + settings + status */}
-          <button
-            className="new-convo"
-            onClick={newConversation}
-            title="Start a new conversation (keeps history)"
-          >
-            <MessageSquarePlus size={14} /> New chat
-          </button>
+          <Tooltip placement="bottom" content="Start a new conversation (history is kept)">
+            <button className="new-convo" onClick={newConversation}>
+              <MessageSquarePlus size={14} /> New chat
+            </button>
+          </Tooltip>
           <Tooltip
             placement="bottom"
             align="end"
@@ -784,13 +785,14 @@ export default function App() {
               <span className="btn-tag">{effectivePerm}</span>
             </button>
           </Tooltip>
-          <button
-            className="conn-btn"
-            onClick={() => (showSettings ? setShowSettings(false) : openSettings())}
-            title="Settings"
-          >
-            <Settings size={15} />
-          </button>
+          <Tooltip placement="bottom" align="end" content="Settings — connections, model, voice, appearance">
+            <button
+              className="conn-btn"
+              onClick={() => (showSettings ? setShowSettings(false) : openSettings())}
+            >
+              <Settings size={15} />
+            </button>
+          </Tooltip>
 
           {/* Status */}
           {showCost && cost > 0 && (
