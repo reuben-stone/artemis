@@ -102,6 +102,13 @@ restart (kills the live session); renderer changes hot-reload. Each phase below 
 - **Local-first SQLite** (`better-sqlite3`, WAL mode) — single backbone for transcript, terminal, session state, and eventually the vector memory tier (`sqlite-vec`). One engine that grows with the roadmap.
 - **No cloud runtime dependency.** All reads/writes hit the embedded file. Cloud is optional sync-only (libSQL/Litestream).
 - **Portability.** New machine = pull repo + copy one SQLite file. With optional sync enabled, even that disappears.
+- **Data migration / import (planned).** A guided "import from another instance" path so a
+  user can bring their historic data — transcript, project registry, memory, PR queue,
+  encrypted credentials — into a fresh instance, e.g. **dev → packaged app** or **old
+  machine → new machine**, instead of starting empty. (A packaged build uses its own
+  `userData` keyed to the bundle, so it never inherits the dev instance's data.) Pairs with
+  the Connections & onboarding UI (Phase 5). Low priority — the copy-one-SQLite-file path
+  already covers power users; this is the point-and-click version for everyone else.
 
 ---
 
