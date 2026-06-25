@@ -56,6 +56,36 @@ export interface PrReview {
   created_at: number
 }
 
+export type TodoStatus = 'todo' | 'doing' | 'done'
+
+export interface Todo {
+  id: number
+  day: string
+  text: string
+  status: TodoStatus
+  priority: string | null
+  project: string | null
+  tags: string | null
+  position: number
+  source: string
+  externalId: string | null
+  externalUrl: string | null
+  carriedFrom: string | null
+  created_at: number
+}
+
+export interface CalendarEvent {
+  id: number
+  day: string
+  starts: string | null
+  ends: string | null
+  title: string
+  notes: string | null
+  source: string
+  externalId: string | null
+  created_at: number
+}
+
 const api = {
   terminal: {
     spawn: (opts: { cols: number; rows: number }) =>
@@ -128,6 +158,30 @@ const api = {
   // On-command briefing — gather structured ecosystem data for the card.
   briefing: {
     data: (): Promise<BriefingData> => ipcRenderer.invoke('briefing:data')
+  },
+  // Day planner — the HUD rail's tickets + local calendar. Same SQLite tables Artemis
+  // CRUDs via its tools, so the rail and the agent never diverge.
+  tasks: {
+    list: (day?: string): Promise<Todo[]> => ipcRenderer.invoke('tasks:list', day),
+    add: (input: { day?: string; text: string; priority?: string; project?: string }): Promise<Todo> =>
+      ipcRenderer.invoke('tasks:add', input),
+    update: (
+      id: number,
+      patch: { text?: string; status?: TodoStatus; priority?: string; day?: string }
+    ): Promise<Todo | null> => ipcRenderer.invoke('tasks:update', { id, patch }),
+    remove: (id: number): Promise<void> => ipcRenderer.invoke('tasks:remove', id),
+    carryOver: (day?: string): Promise<Todo[]> => ipcRenderer.invoke('tasks:carryOver', day)
+  },
+  calendar: {
+    list: (opts?: { day?: string; days?: number }): Promise<CalendarEvent[]> =>
+      ipcRenderer.invoke('calendar:list', opts ?? {}),
+    add: (input: { day?: string; title: string; starts?: string; ends?: string; notes?: string }): Promise<CalendarEvent> =>
+      ipcRenderer.invoke('calendar:add', input),
+    update: (
+      id: number,
+      patch: { title?: string; day?: string; starts?: string; ends?: string; notes?: string }
+    ): Promise<CalendarEvent | null> => ipcRenderer.invoke('calendar:update', { id, patch }),
+    remove: (id: number): Promise<void> => ipcRenderer.invoke('calendar:remove', id)
   },
   // PR Review Queue — worker-agent PRs awaiting the human's approval.
   prReviews: {

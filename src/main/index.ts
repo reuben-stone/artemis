@@ -44,7 +44,19 @@ import {
   type GaProp,
   listPrReviews,
   setPrReviewed,
-  clearReviewedPrs
+  clearReviewedPrs,
+  localDay,
+  listTodos,
+  addTodo,
+  updateTodo,
+  removeTodo,
+  carryOverTodos,
+  listEvents,
+  listEventsRange,
+  addEvent,
+  updateEvent,
+  removeEvent,
+  type TodoStatus
 } from './store'
 
 const execp = promisify(exec)
@@ -399,6 +411,42 @@ ipcMain.handle('prReviews:clearReviewed', () => {
   clearReviewedPrs()
   return listPrReviews()
 })
+
+// --- Day planner IPC: todos (ticket system) + local calendar ---
+// The renderer rail reads/writes here; Artemis writes the same tables via its tools,
+// so both stay in sync against one SQLite source of truth.
+ipcMain.handle('tasks:list', (_e, day?: string) => listTodos(day || localDay()))
+ipcMain.handle('tasks:add', (_e, input: { day?: string; text: string; priority?: string; project?: string }) =>
+  addTodo({ day: input.day || localDay(), text: input.text, priority: input.priority, project: input.project })
+)
+ipcMain.handle(
+  'tasks:update',
+  (_e, { id, patch }: { id: number; patch: { text?: string; status?: TodoStatus; priority?: string; day?: string } }) =>
+    updateTodo(id, patch)
+)
+ipcMain.handle('tasks:remove', (_e, id: number) => removeTodo(id))
+ipcMain.handle('tasks:carryOver', (_e, day?: string) => {
+  carryOverTodos(day || localDay())
+  return listTodos(day || localDay())
+})
+
+ipcMain.handle('calendar:list', (_e, { day, days }: { day?: string; days?: number } = {}) => {
+  const start = day || localDay()
+  if (!days || days <= 1) return listEvents(start)
+  const end = localDay(new Date(new Date(`${start}T12:00:00`).getTime() + (days - 1) * 86400000))
+  return listEventsRange(start, end)
+})
+ipcMain.handle(
+  'calendar:add',
+  (_e, input: { day?: string; title: string; starts?: string; ends?: string; notes?: string }) =>
+    addEvent({ ...input, day: input.day || localDay() })
+)
+ipcMain.handle(
+  'calendar:update',
+  (_e, { id, patch }: { id: number; patch: { title?: string; day?: string; starts?: string; ends?: string; notes?: string } }) =>
+    updateEvent(id, patch)
+)
+ipcMain.handle('calendar:remove', (_e, id: number) => removeEvent(id))
 
 // --- Auth IPC ---
 ipcMain.handle('auth:status', async () => ({

@@ -23,6 +23,21 @@ import {
   listProjects,
   getProjectGaProps,
   listPrReviews,
+  localDay,
+  listTodos,
+  addTodo,
+  updateTodo,
+  removeTodo,
+  carryOverTodos,
+  unfinishedBefore,
+  listEvents,
+  listEventsRange,
+  addEvent,
+  updateEvent,
+  removeEvent,
+  type Todo,
+  type TodoStatus,
+  type CalendarEvent,
   type StoredTurn
 } from './store'
 import { gaSummary, hasGaCredentials } from './ga'
@@ -49,7 +64,10 @@ export const AUTO_ALLOW = new Set([
   'WebFetch',
   'ecosystem_status',
   'system_context',
-  'pr_queue'
+  'pr_queue',
+  'tasks_view',
+  'calendar_view',
+  'plan_my_day'
 ])
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
@@ -385,6 +403,150 @@ const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'tasks_view',
+    description:
+      "Read the user's todo/ticket list for a day (default today) as a formatted list. Tickets carry an id, status (todo/doing/done), optional priority, project, and tags. Also notes unfinished tickets still parked on earlier days (carry-over candidates). Use for 'what's on my list', 'what am I doing today', planning, or before adding/updating a ticket so you have its id.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        day: { type: 'string', description: "Day as 'YYYY-MM-DD'. Omit for today." }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'task_add',
+    description:
+      "Add one or more tickets to a day's list (default today). Each becomes a ticket with status 'todo'. Use for 'add X to my list', 'remind me to…', capturing tasks. Set project to tie a ticket to a repo (e.g. 'Lumi'); priority is low|med|high.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        items: {
+          type: 'array',
+          description: 'The tickets to add.',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string', description: 'The ticket text.' },
+              priority: { type: 'string', enum: ['low', 'med', 'high'] },
+              project: { type: 'string', description: 'Associated project/repo name.' },
+              tags: { type: 'string', description: 'Comma-separated labels.' }
+            },
+            required: ['text']
+          }
+        },
+        day: { type: 'string', description: "Day as 'YYYY-MM-DD'. Omit for today." }
+      },
+      required: ['items']
+    }
+  },
+  {
+    name: 'task_update',
+    description:
+      "Update a ticket by id (get ids from tasks_view): change its status (todo/doing/done — use 'done' to check it off), edit the text, set priority/project/tags, or move it to another day. Only the fields you pass change.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'number', description: 'The ticket id.' },
+        status: { type: 'string', enum: ['todo', 'doing', 'done'] },
+        text: { type: 'string' },
+        priority: { type: 'string', enum: ['low', 'med', 'high'] },
+        project: { type: 'string' },
+        tags: { type: 'string' },
+        day: { type: 'string', description: "Move to this day ('YYYY-MM-DD')." }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'task_remove',
+    description: 'Delete a ticket by id (get ids from tasks_view). Use for "remove that" / "delete X" — not for completing one (use task_update status=done for that).',
+    input_schema: {
+      type: 'object' as const,
+      properties: { id: { type: 'number', description: 'The ticket id.' } },
+      required: ['id']
+    }
+  },
+  {
+    name: 'task_carry_over',
+    description:
+      "Pull every unfinished ticket from earlier days forward onto a target day (default today). Use for 'bring over yesterday's tasks', 'roll forward what I didn't finish', or first thing when planning the day. Each carried ticket remembers the day it started on.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        day: { type: 'string', description: "Target day as 'YYYY-MM-DD'. Omit for today." }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'calendar_view',
+    description:
+      "Read the user's local calendar — a single day (default today) or a range of days. Returns timed and all-day events. Use for 'what's on today', 'am I free this afternoon', 'what's this week'.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        day: { type: 'string', description: "Start day as 'YYYY-MM-DD'. Omit for today." },
+        days: { type: 'number', description: 'How many days from `day` to include (default 1).' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'event_add',
+    description:
+      "Add an event to the user's local calendar. Use for 'put X on my calendar', 'schedule a call at 3'. Times are local 'HH:MM' (24h); omit starts for an all-day event.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        title: { type: 'string', description: 'Event title.' },
+        day: { type: 'string', description: "Day as 'YYYY-MM-DD'. Omit for today." },
+        starts: { type: 'string', description: "Start time 'HH:MM' (24h). Omit for all-day." },
+        ends: { type: 'string', description: "End time 'HH:MM' (24h)." },
+        notes: { type: 'string' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'event_update',
+    description:
+      'Update a calendar event by id (get ids from calendar_view): retitle, move day/time, or edit notes. Only the fields you pass change.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'number', description: 'The event id.' },
+        title: { type: 'string' },
+        day: { type: 'string', description: "'YYYY-MM-DD'." },
+        starts: { type: 'string', description: "'HH:MM' (24h)." },
+        ends: { type: 'string', description: "'HH:MM' (24h)." },
+        notes: { type: 'string' }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'event_remove',
+    description: 'Delete a calendar event by id (get ids from calendar_view).',
+    input_schema: {
+      type: 'object' as const,
+      properties: { id: { type: 'number', description: 'The event id.' } },
+      required: ['id']
+    }
+  },
+  {
+    name: 'plan_my_day',
+    description:
+      "Gather everything needed to plan a day (default today) in one call: the day's tickets, unfinished tickets carried over from earlier days, and the day's calendar events. Use when the user says 'plan my day' / 'what should I focus on'. Then synthesise a focused plan; combine with ecosystem_status if the day is about the repos.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        day: { type: 'string', description: "Day as 'YYYY-MM-DD'. Omit for today." }
+      },
+      required: []
+    }
+  },
+  {
     name: 'dispatch_worker',
     description:
       'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
@@ -695,6 +857,152 @@ function toolPrQueue(): string {
   return `PR Review Queue — ${prs.length} total, ${pending} awaiting review:\n\n${rows.join('\n\n')}`
 }
 
+// ─── Day planner: todos (a ticket system) + local calendar ──────────────────
+
+/** Friendly day label — names today/yesterday/tomorrow, else the raw date. Noon-anchored
+ *  arithmetic so DST never shifts the neighbour days. */
+function dayLabel(day: string): string {
+  const today = localDay()
+  if (day === today) return `${day} (today)`
+  const anchor = new Date(`${today}T12:00:00`).getTime()
+  if (day === localDay(new Date(anchor - 86400000))) return `${day} (yesterday)`
+  if (day === localDay(new Date(anchor + 86400000))) return `${day} (tomorrow)`
+  return day
+}
+
+function fmtTodo(t: Todo): string {
+  const box = t.status === 'done' ? '☑' : t.status === 'doing' ? '◑' : '☐'
+  const tags: string[] = []
+  if (t.priority) tags.push(`!${t.priority}`)
+  if (t.project) tags.push(`@${t.project}`)
+  if (t.tags) tags.push(...t.tags.split(',').map((s) => `#${s.trim()}`).filter((s) => s.length > 1))
+  if (t.source !== 'local') tags.push(`from:${t.source}`)
+  if (t.carriedFrom && t.carriedFrom !== t.day) tags.push(`carried from ${t.carriedFrom}`)
+  return `${box} [#${t.id}] ${t.text}${tags.length ? `  (${tags.join(', ')})` : ''}`
+}
+
+function toolTasksView(input: { day?: string }): string {
+  const day = input.day || localDay()
+  const todos = listTodos(day)
+  const lines = [`Tickets for ${dayLabel(day)}:`]
+  lines.push(...(todos.length ? todos.map((t) => '  ' + fmtTodo(t)) : ['  (none)']))
+  const carry = unfinishedBefore(day)
+  if (carry.length) {
+    lines.push('', `Unfinished from earlier days (${carry.length}) — roll forward with task_carry_over:`)
+    lines.push(...carry.slice(0, 12).map((t) => `  ${fmtTodo(t)}  [${t.day}]`))
+    if (carry.length > 12) lines.push(`  …and ${carry.length - 12} more`)
+  }
+  return lines.join('\n')
+}
+
+function toolTaskAdd(input: {
+  items: Array<{ text: string; priority?: string; project?: string; tags?: string }>
+  day?: string
+}): string {
+  const day = input.day || localDay()
+  const added = (input.items ?? [])
+    .filter((i) => i?.text?.trim())
+    .map((i) =>
+      addTodo({ day, text: i.text.trim(), priority: i.priority ?? null, project: i.project ?? null, tags: i.tags ?? null })
+    )
+  if (!added.length) return 'No items given to add.'
+  return `Added ${added.length} ticket(s) to ${dayLabel(day)}:\n${added.map((t) => '  ' + fmtTodo(t)).join('\n')}`
+}
+
+function toolTaskUpdate(input: {
+  id: number
+  status?: TodoStatus
+  text?: string
+  priority?: string
+  project?: string
+  tags?: string
+  day?: string
+}): string {
+  const { id, ...patch } = input
+  const updated = updateTodo(id, patch)
+  if (!updated) return `No ticket with id #${id}.`
+  return `Updated ticket #${id}:\n  ${fmtTodo(updated)}  [${updated.day}]`
+}
+
+function toolTaskRemove(input: { id: number }): string {
+  removeTodo(input.id)
+  return `Removed ticket #${input.id}.`
+}
+
+function toolTaskCarryOver(input: { day?: string }): string {
+  const day = input.day || localDay()
+  const n = carryOverTodos(day)
+  if (!n) return `Nothing to carry over — no unfinished tickets before ${dayLabel(day)}.`
+  return `Carried ${n} unfinished ticket(s) forward onto ${dayLabel(day)}.\n\n${toolTasksView({ day })}`
+}
+
+function fmtEvent(e: CalendarEvent): string {
+  const when = e.starts ? `${e.starts}${e.ends ? `–${e.ends}` : ''}` : 'all-day'
+  const src = e.source !== 'local' ? `  (from:${e.source})` : ''
+  const notes = e.notes ? `\n      ${e.notes}` : ''
+  return `${when}  [#${e.id}] ${e.title}${src}${notes}`
+}
+
+function toolCalendarView(input: { day?: string; days?: number }): string {
+  const start = input.day || localDay()
+  const span = Math.max(1, Math.min(31, Math.floor(input.days ?? 1)))
+  if (span === 1) {
+    const events = listEvents(start)
+    return [`Calendar — ${dayLabel(start)}:`, ...(events.length ? events.map((e) => '  ' + fmtEvent(e)) : ['  (no events)'])].join('\n')
+  }
+  const end = localDay(new Date(new Date(`${start}T12:00:00`).getTime() + (span - 1) * 86400000))
+  const events = listEventsRange(start, end)
+  const lines = [`Calendar — ${start} to ${end}:`]
+  if (!events.length) return [...lines, '  (no events)'].join('\n')
+  let lastDay = ''
+  for (const e of events) {
+    if (e.day !== lastDay) {
+      lines.push(`  ${dayLabel(e.day)}:`)
+      lastDay = e.day
+    }
+    lines.push('    ' + fmtEvent(e))
+  }
+  return lines.join('\n')
+}
+
+function toolEventAdd(input: { title: string; day?: string; starts?: string; ends?: string; notes?: string }): string {
+  if (!input.title?.trim()) return 'An event needs a title.'
+  const day = input.day || localDay()
+  const e = addEvent({
+    day,
+    title: input.title.trim(),
+    starts: input.starts ?? null,
+    ends: input.ends ?? null,
+    notes: input.notes ?? null
+  })
+  return `Added to ${dayLabel(day)}:\n  ${fmtEvent(e)}`
+}
+
+function toolEventUpdate(input: {
+  id: number
+  title?: string
+  day?: string
+  starts?: string
+  ends?: string
+  notes?: string
+}): string {
+  const { id, ...patch } = input
+  const e = updateEvent(id, patch)
+  if (!e) return `No event with id #${id}.`
+  return `Updated event #${id}:\n  ${dayLabel(e.day)}  —  ${fmtEvent(e)}`
+}
+
+function toolEventRemove(input: { id: number }): string {
+  removeEvent(input.id)
+  return `Removed event #${input.id}.`
+}
+
+/** One-call planning context: the day's tickets (incl. carry-over candidates) + events. */
+function toolPlanMyDay(input: { day?: string }): string {
+  const day = input.day || localDay()
+  return [`Planning input for ${dayLabel(day)} — synthesise a focused plan from this:`, '', toolTasksView({ day }), '', toolCalendarView({ day })].join('\n')
+}
+
 /** A snapshot of the user's live desktop/OS context — a sense a terminal tool lacks. */
 async function toolSystemContext(): Promise<string> {
   const lines: string[] = []
@@ -845,6 +1153,26 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       return toolPrQueue()
     case 'read_clipboard':
       return toolReadClipboard()
+    case 'tasks_view':
+      return toolTasksView(input as Parameters<typeof toolTasksView>[0])
+    case 'task_add':
+      return toolTaskAdd(input as Parameters<typeof toolTaskAdd>[0])
+    case 'task_update':
+      return toolTaskUpdate(input as Parameters<typeof toolTaskUpdate>[0])
+    case 'task_remove':
+      return toolTaskRemove(input as Parameters<typeof toolTaskRemove>[0])
+    case 'task_carry_over':
+      return toolTaskCarryOver(input as Parameters<typeof toolTaskCarryOver>[0])
+    case 'calendar_view':
+      return toolCalendarView(input as Parameters<typeof toolCalendarView>[0])
+    case 'event_add':
+      return toolEventAdd(input as Parameters<typeof toolEventAdd>[0])
+    case 'event_update':
+      return toolEventUpdate(input as Parameters<typeof toolEventUpdate>[0])
+    case 'event_remove':
+      return toolEventRemove(input as Parameters<typeof toolEventRemove>[0])
+    case 'plan_my_day':
+      return toolPlanMyDay(input as Parameters<typeof toolPlanMyDay>[0])
     case 'dispatch_worker':
       return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:

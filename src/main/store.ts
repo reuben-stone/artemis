@@ -114,6 +114,40 @@ function getDb(): DbLike {
       reviewed INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
+
+    -- A lightweight ticket system, day-scoped. Beyond a checkbox: status workflow,
+    -- priority, a project link (Lumi / LumiLens / …), tags, and external-source linkage
+    -- so tickets can be imported (Lumi scanner, GitHub issues, …) and de-duped, then
+    -- carried forward day to day until done.
+    CREATE TABLE IF NOT EXISTS todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day TEXT NOT NULL,                       -- local 'YYYY-MM-DD' the ticket sits on
+      text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'todo',      -- 'todo' | 'doing' | 'done'
+      priority TEXT,                            -- 'low' | 'med' | 'high' (null = unset)
+      project TEXT,                             -- associated project/repo name (null = personal)
+      tags TEXT,                                -- comma-separated labels
+      position INTEGER NOT NULL DEFAULT 0,      -- manual order within a day
+      source TEXT NOT NULL DEFAULT 'local',     -- 'local' | 'github' | 'lumi' | … (provenance)
+      external_id TEXT,                         -- source ticket id, for de-dup on import
+      external_url TEXT,                        -- link back to the source ticket
+      carried_from TEXT,                        -- original day if pulled forward from a past day
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_todos_day ON todos(day);
+
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day TEXT NOT NULL,                        -- local 'YYYY-MM-DD'
+      starts TEXT,                              -- local 'HH:MM' (null = all-day)
+      ends TEXT,                                -- local 'HH:MM' (null = open-ended)
+      title TEXT NOT NULL,
+      notes TEXT,
+      source TEXT NOT NULL DEFAULT 'local',     -- 'local' | 'google' | … (sync provenance)
+      external_id TEXT,                         -- e.g. a Google Calendar event id, for sync
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_day ON events(day);
   `)
   return db
 }
@@ -361,6 +395,272 @@ export function setPrReviewed(id: number, reviewed: boolean): void {
 /** Drop reviewed rows (a "clear done" action for the queue). */
 export function clearReviewedPrs(): void {
   getDb().prepare('DELETE FROM pr_reviews WHERE reviewed = 1').run()
+}
+
+// --- day planner: todos (a lightweight ticket system) + local calendar -------
+//
+// Both tables carry a `source` (+ external ids) so a future sync can adopt rows
+// without a schema change: GitHub issues / Lumi-scanner tickets become source-tagged
+// todos, Google-Calendar entries become source='google' events, each de-duped on its
+// external id. Today everything is source='local'. See ROADMAP-TO-JARVIS.md Phase 7.
+
+/** The user's wall-clock day as 'YYYY-MM-DD' (local, NOT UTC — a planner is local). */
+export function localDay(d = new Date()): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+export type TodoStatus = 'todo' | 'doing' | 'done'
+
+export interface Todo {
+  id: number
+  day: string
+  text: string
+  status: TodoStatus
+  priority: string | null
+  project: string | null
+  tags: string | null
+  position: number
+  source: string
+  externalId: string | null
+  externalUrl: string | null
+  carriedFrom: string | null
+  created_at: number
+}
+
+function rowToTodo(r: Record<string, unknown>): Todo {
+  return {
+    id: r.id as number,
+    day: r.day as string,
+    text: r.text as string,
+    status: (r.status as TodoStatus) ?? 'todo',
+    priority: (r.priority as string) ?? null,
+    project: (r.project as string) ?? null,
+    tags: (r.tags as string) ?? null,
+    position: r.position as number,
+    source: (r.source as string) ?? 'local',
+    externalId: (r.external_id as string) ?? null,
+    externalUrl: (r.external_url as string) ?? null,
+    carriedFrom: (r.carried_from as string) ?? null,
+    created_at: r.created_at as number
+  }
+}
+
+/** All tickets on a day: open work first (by priority then manual order), done last. */
+export function listTodos(day: string): Todo[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT * FROM todos WHERE day = ?
+         ORDER BY (status = 'done') ASC,
+                  CASE priority WHEN 'high' THEN 0 WHEN 'med' THEN 1 WHEN 'low' THEN 2 ELSE 3 END ASC,
+                  position ASC, id ASC`
+      )
+      .all(day) as Array<Record<string, unknown>>
+  ).map(rowToTodo)
+}
+
+/** Add a ticket. Imported items (with an externalId) are de-duped per day, so a repeat
+ *  import is a no-op rather than a pile of duplicates. */
+export function addTodo(input: {
+  day: string
+  text: string
+  priority?: string | null
+  project?: string | null
+  tags?: string | null
+  status?: TodoStatus
+  source?: string
+  externalId?: string | null
+  externalUrl?: string | null
+  carriedFrom?: string | null
+}): Todo {
+  const db = getDb()
+  if (input.externalId) {
+    const dup = db
+      .prepare('SELECT * FROM todos WHERE external_id = ? AND source = ?')
+      .get(input.externalId, input.source ?? 'local') as Record<string, unknown> | undefined
+    if (dup) return rowToTodo(dup)
+  }
+  const pos = (
+    db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS p FROM todos WHERE day = ?').get(input.day) as {
+      p: number
+    }
+  ).p
+  const info = db
+    .prepare(
+      `INSERT INTO todos (day, text, status, priority, project, tags, position, source, external_id, external_url, carried_from, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      input.day,
+      input.text,
+      input.status ?? 'todo',
+      input.priority ?? null,
+      input.project ?? null,
+      input.tags ?? null,
+      pos,
+      input.source ?? 'local',
+      input.externalId ?? null,
+      input.externalUrl ?? null,
+      input.carriedFrom ?? null,
+      Date.now()
+    )
+  return rowToTodo(db.prepare('SELECT * FROM todos WHERE id = ?').get(info.lastInsertRowid) as Record<string, unknown>)
+}
+
+export function updateTodo(
+  id: number,
+  patch: {
+    text?: string
+    status?: TodoStatus
+    priority?: string | null
+    project?: string | null
+    tags?: string | null
+    day?: string
+  }
+): Todo | null {
+  const db = getDb()
+  const cur = db.prepare('SELECT * FROM todos WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  if (!cur) return null
+  db.prepare(
+    'UPDATE todos SET text = ?, status = ?, priority = ?, project = ?, tags = ?, day = ? WHERE id = ?'
+  ).run(
+    patch.text ?? (cur.text as string),
+    patch.status ?? (cur.status as string) ?? 'todo',
+    patch.priority !== undefined ? patch.priority : (cur.priority as string) ?? null,
+    patch.project !== undefined ? patch.project : (cur.project as string) ?? null,
+    patch.tags !== undefined ? patch.tags : (cur.tags as string) ?? null,
+    patch.day ?? (cur.day as string),
+    id
+  )
+  return rowToTodo(db.prepare('SELECT * FROM todos WHERE id = ?').get(id) as Record<string, unknown>)
+}
+
+export function removeTodo(id: number): void {
+  getDb().prepare('DELETE FROM todos WHERE id = ?').run(id)
+}
+
+/** Pull every unfinished ticket from days BEFORE `toDay` forward onto `toDay`. The
+ *  original day is recorded once in carried_from (stable across repeated carries), so
+ *  "this has slipped 3 days" stays visible. Returns how many moved. */
+export function carryOverTodos(toDay: string): number {
+  return getDb()
+    .prepare(
+      `UPDATE todos SET carried_from = COALESCE(carried_from, day), day = ?
+       WHERE status != 'done' AND day < ?`
+    )
+    .run(toDay, toDay).changes
+}
+
+/** Unfinished tickets still parked on days before `day` — carry-over candidates. */
+export function unfinishedBefore(day: string): Todo[] {
+  return (
+    getDb()
+      .prepare("SELECT * FROM todos WHERE status != 'done' AND day < ? ORDER BY day ASC, position ASC")
+      .all(day) as Array<Record<string, unknown>>
+  ).map(rowToTodo)
+}
+
+// --- local calendar -----------------------------------------------------------
+
+export interface CalendarEvent {
+  id: number
+  day: string
+  starts: string | null
+  ends: string | null
+  title: string
+  notes: string | null
+  source: string
+  externalId: string | null
+  created_at: number
+}
+
+function rowToEvent(r: Record<string, unknown>): CalendarEvent {
+  return {
+    id: r.id as number,
+    day: r.day as string,
+    starts: (r.starts as string) ?? null,
+    ends: (r.ends as string) ?? null,
+    title: r.title as string,
+    notes: (r.notes as string) ?? null,
+    source: (r.source as string) ?? 'local',
+    externalId: (r.external_id as string) ?? null,
+    created_at: r.created_at as number
+  }
+}
+
+const EVENT_ORDER = 'ORDER BY day ASC, (starts IS NULL) ASC, starts ASC, id ASC'
+
+export function listEvents(day: string): CalendarEvent[] {
+  return (
+    getDb().prepare(`SELECT * FROM events WHERE day = ? ${EVENT_ORDER}`).all(day) as Array<Record<string, unknown>>
+  ).map(rowToEvent)
+}
+
+export function listEventsRange(fromDay: string, toDay: string): CalendarEvent[] {
+  return (
+    getDb()
+      .prepare(`SELECT * FROM events WHERE day >= ? AND day <= ? ${EVENT_ORDER}`)
+      .all(fromDay, toDay) as Array<Record<string, unknown>>
+  ).map(rowToEvent)
+}
+
+export function addEvent(input: {
+  day: string
+  title: string
+  starts?: string | null
+  ends?: string | null
+  notes?: string | null
+  source?: string
+  externalId?: string | null
+}): CalendarEvent {
+  const db = getDb()
+  if (input.externalId) {
+    const dup = db
+      .prepare('SELECT * FROM events WHERE external_id = ? AND source = ?')
+      .get(input.externalId, input.source ?? 'local') as Record<string, unknown> | undefined
+    if (dup) return rowToEvent(dup)
+  }
+  const info = db
+    .prepare(
+      `INSERT INTO events (day, starts, ends, title, notes, source, external_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      input.day,
+      input.starts ?? null,
+      input.ends ?? null,
+      input.title,
+      input.notes ?? null,
+      input.source ?? 'local',
+      input.externalId ?? null,
+      Date.now()
+    )
+  return rowToEvent(db.prepare('SELECT * FROM events WHERE id = ?').get(info.lastInsertRowid) as Record<string, unknown>)
+}
+
+export function updateEvent(
+  id: number,
+  patch: { title?: string; day?: string; starts?: string | null; ends?: string | null; notes?: string | null }
+): CalendarEvent | null {
+  const db = getDb()
+  const cur = db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  if (!cur) return null
+  db.prepare('UPDATE events SET title = ?, day = ?, starts = ?, ends = ?, notes = ? WHERE id = ?').run(
+    patch.title ?? (cur.title as string),
+    patch.day ?? (cur.day as string),
+    patch.starts !== undefined ? patch.starts : (cur.starts as string) ?? null,
+    patch.ends !== undefined ? patch.ends : (cur.ends as string) ?? null,
+    patch.notes !== undefined ? patch.notes : (cur.notes as string) ?? null,
+    id
+  )
+  return rowToEvent(db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown>)
+}
+
+export function removeEvent(id: number): void {
+  getDb().prepare('DELETE FROM events WHERE id = ?').run(id)
 }
 
 /** Seed Artemis's own repo as a project on first run so the switcher is never empty. */

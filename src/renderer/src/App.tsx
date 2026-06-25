@@ -8,6 +8,7 @@ import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
 import { SettingsModal } from './components/SettingsModal'
 import { BriefingCard } from './components/BriefingCard'
+import { HudRail } from './components/HudRail'
 import { CommandPalette, type Command } from './components/CommandPalette'
 import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign } from 'lucide-react'
 import type { Project, PrReview, GaProp, BriefingData } from '../../preload'
@@ -52,6 +53,9 @@ export default function App() {
   const [showBriefing, setShowBriefing] = useState(false)
   const [briefingData, setBriefingData] = useState<BriefingData | null>(null)
   const [briefingLoading, setBriefingLoading] = useState(false)
+  // Bumped each time a turn settles so the HUD rail refetches — Artemis may have
+  // CRUD'd tickets/events via its tools during the turn.
+  const [hudRefresh, setHudRefresh] = useState(0)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -400,6 +404,7 @@ export default function App() {
         else setState('idle')
         setBusy(false)
         activeReq.current = null
+        setHudRefresh((n) => n + 1) // turn done — pull any agent-side ticket/event edits
         // Drain one queued message. Defer by one tick so the completed turn
         // renders before the next one's empty assistant bubble appears.
         const next = queueRef.current.shift()
@@ -696,27 +701,30 @@ export default function App() {
 
       <div className="stage">
         <section className="orb-pane">
-          <Orb state={state} amplitudeRef={amplitudeRef} />
-          {showBriefing && (
-            <div className="orb-dock">
-              <BriefingCard
-                data={briefingData}
-                loading={briefingLoading}
-                onRefresh={runBriefingNow}
-                onClose={() => setShowBriefing(false)}
-              />
-            </div>
-          )}
-          {showPrs && (
-            <div className="orb-dock-bottom">
-              <PrReviewQueue
-                prs={prs}
-                onToggle={togglePr}
-                onClearReviewed={clearReviewedPrs}
-                onClose={() => setShowPrs(false)}
-              />
-            </div>
-          )}
+          <HudRail refreshSignal={hudRefresh} onAsk={(p) => void send(p)} />
+          <div className="orb-stage">
+            <Orb state={state} amplitudeRef={amplitudeRef} />
+            {showBriefing && (
+              <div className="orb-dock">
+                <BriefingCard
+                  data={briefingData}
+                  loading={briefingLoading}
+                  onRefresh={runBriefingNow}
+                  onClose={() => setShowBriefing(false)}
+                />
+              </div>
+            )}
+            {showPrs && (
+              <div className="orb-dock-bottom">
+                <PrReviewQueue
+                  prs={prs}
+                  onToggle={togglePr}
+                  onClearReviewed={clearReviewedPrs}
+                  onClose={() => setShowPrs(false)}
+                />
+              </div>
+            )}
+          </div>
         </section>
         <section className="side-col">
           {showTerminal && (
