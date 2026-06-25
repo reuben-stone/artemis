@@ -403,6 +403,41 @@ html, body, #root {
 .perm-trusted { color: #f0b429; border-color: #f0b42955; background: #f0b4291a; }
 .perm-trusted .btn-tag { color: #f0b429; opacity: 1; }
 
+/* ── Tooltip (styled, replaces native title boxes) ───────────────────────── */
+.tip-wrap { position: relative; display: inline-flex; }
+.tip {
+  position: absolute;
+  z-index: 200;
+  width: max-content;
+  max-width: 250px;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(31, 24, 54, 0.98), rgba(20, 16, 34, 0.98));
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 9px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: tipIn 0.12s ease both;
+}
+.tip-bottom { top: calc(100% + 6px); }
+.tip-top { bottom: calc(100% + 6px); }
+.tip-center { left: 50%; transform: translateX(-50%); }
+.tip-start { left: 0; }
+.tip-end { right: 0; }
+@keyframes tipIn { from { opacity: 0; } to { opacity: 1; } }
+.tip-title { font-weight: 600; margin-bottom: 3px; }
+.tip-title.guarded { color: var(--text); }
+.tip-title.smart { color: var(--accent-bright); }
+.tip-title.trusted { color: #f0b429; }
+.tip-hint { margin-top: 5px; color: var(--muted); font-size: 11px; }
+
 .pr-row {
   display: flex;
   align-items: flex-start;
