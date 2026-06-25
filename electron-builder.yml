@@ -21,10 +21,13 @@ mac:
   # Drop a 1024x1024 build/icon.png (or build/icon.icns) for a custom Dock icon;
   # without one, electron-builder uses the default Electron icon.
   #
-  # Stable self-signed identity (run scripts/setup-self-signing.sh once) so rebuilds
-  # keep the same signature → macOS persists Screen Recording permission + safeStorage
-  # secrets across updates. Swap for a real "Developer ID Application: …" later.
-  identity: Artemis Self-Signed
+  # Stable signing identity → rebuilds keep the same signature, so macOS persists Screen
+  # Recording permission + safeStorage secrets across updates. Currently Reuben's Apple
+  # Development cert (stable, Apple-issued). For *distribution to others* this must become
+  # a "Developer ID Application: …" cert + notarization. No Apple cert on a machine?
+  # run scripts/setup-self-signing.sh and set this to "Artemis Self-Signed".
+  # (Overridable at build time via the CSC_NAME env var.)
+  identity: 'Apple Development: Reuben Stone (67AK2Q89A8)'
   hardenedRuntime: false
   gatekeeperAssess: false
   target:
