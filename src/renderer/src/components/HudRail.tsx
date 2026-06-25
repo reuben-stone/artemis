@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   ListTodo,
   CalendarDays,
@@ -27,6 +27,10 @@ function todayLabel(): string {
 
 const PRIORITY_RANK: Record<string, number> = { high: 0, med: 1, low: 2 }
 
+const RAIL_MIN = 200
+const RAIL_MAX = 420
+const RAIL_DEFAULT = 244
+
 export function HudRail({
   refreshSignal,
   onAsk,
@@ -41,9 +45,37 @@ export function HudRail({
   onOpenBriefing: () => void
 }): JSX.Element {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('artemis.hud.collapsed') === '1')
+  // User-adjustable rail width (drag the right edge). Clamped, persisted.
+  const [width, setWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('artemis.hud.width'))
+    return saved >= RAIL_MIN && saved <= RAIL_MAX ? saved : RAIL_DEFAULT
+  })
   const [todos, setTodos] = useState<Todo[]>([])
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [draft, setDraft] = useState('')
+
+  useEffect(() => {
+    localStorage.setItem('artemis.hud.width', String(width))
+  }, [width])
+
+  const startResize = useCallback(
+    (e: ReactMouseEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startW = width
+      const onMove = (ev: MouseEvent) =>
+        setWidth(Math.max(RAIL_MIN, Math.min(RAIL_MAX, startW + (ev.clientX - startX))))
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        document.body.style.userSelect = ''
+      }
+      document.body.style.userSelect = 'none' // don't select text while dragging
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [width]
+  )
 
   const refresh = useCallback(async () => {
     const [t, e] = await Promise.all([
@@ -115,7 +147,8 @@ export function HudRail({
   const open = todos.filter((t) => t.status !== 'done')
 
   return (
-    <div className="hud-rail">
+    <div className="hud-rail" style={{ flexBasis: width, width }}>
+      <div className="hud-rail-resize" onMouseDown={startResize} title="Drag to resize" />
       <div className="hud-rail-head">
         <span className="hud-rail-day">{todayLabel()}</span>
         <div className="hud-rail-head-actions">
