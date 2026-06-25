@@ -111,8 +111,9 @@ export function OpsRail({
             <div key={p.name} className="hud-eco">
               <div className="hud-eco-top">
                 <span className="hud-eco-name">{p.name}</span>
-                <span className={`hud-eco-branch ${p.dirty.length ? 'dirty' : ''}`}>
-                  <GitBranch size={10} /> {p.branch ?? '—'}
+                <span className={`hud-eco-branch ${p.dirty.length ? 'dirty' : ''}`} title={p.branch ?? ''}>
+                  <GitBranch size={10} />
+                  <span className="hud-eco-branch-name">{p.branch ?? '—'}</span>
                 </span>
               </div>
               <div className="hud-eco-meta">

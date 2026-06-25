@@ -5,10 +5,8 @@ metadata:
   type: project
 ---
 
-Two small, renderer-only UI fixes are parked, deliberately ON HOLD until the "senses" work (vision/attachments, happening in a separate shell editing src/main + src/preload) is complete — to avoid restart collisions.
+RESOLVED 2026-06-25 (both addressed):
 
-1. Streaming render polish — mid-stream, new sentences/points can butt together without a space because separate lines only settle on completion. Fix: when adding points on the fly, drop to a new line/paragraph so partial render breaks cleanly too. Lives in the chat MessageContent renderer (src/renderer). Reuben says it's minor (final render is correct), behavioural habit-change may suffice over a code fix.
+1. Streaming render polish — mid-stream, new sentences/points can momentarily butt together. Investigated: NOT a CSS/markdown-spacing gap (.md p/li margins are correct; remarkBreaks is on). It's a token-boundary artifact — the newline and the next sentence can arrive in either order within streamed chunks, so they render adjacent for a beat then settle when the newline token lands. A real fix needs buffering partial lines (adds latency/complexity) for a purely cosmetic, self-correcting glitch the owner already deemed minor. Decision: deliberately LEFT — not worth the streaming-regression risk. Revisit only with a concrete repro that bothers in practice.
 
-2. Ecosystem-status card truncation — the "Last commit … : <message>" line is clipped at the card's right edge instead of wrapping. Renderer-only fix (word-wrap/overflow on the status-card text).
-
-Do NOT touch src/main or src/preload while senses work is live.
+2. Ecosystem-status card truncation — the original "Last commit … : <message>" line no longer exists: the briefing-card redesign replaced it with branch + commits/7d + KPIs. Hardened the current cards instead so long branches/PR-titles/paths wrap or ellipsis rather than clip (brief-pr, brief-dirty, brief-proj-meta → overflow-wrap; OpsRail hud-eco-branch → ellipsis). DONE.
