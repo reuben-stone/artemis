@@ -140,6 +140,21 @@ describe('execute — bash tool', () => {
   })
 })
 
+describe('agent-driven UI — show_panel', () => {
+  it('emits a ui open event for a known panel and reports it', async () => {
+    const events: Record<string, unknown>[] = []
+    const out = await executeTool('show_panel', { panel: 'calendar' }, { emit: (e) => events.push(e) })
+    expect(events).toContainEqual({ ui: { panel: 'calendar' } })
+    expect(out).toMatch(/opened/i)
+  })
+  it('rejects an unknown panel without emitting', async () => {
+    const events: Record<string, unknown>[] = []
+    const out = await executeTool('show_panel', { panel: 'nope' }, { emit: (e) => events.push(e) })
+    expect(events).toEqual([])
+    expect(out).toMatch(/unknown panel/i)
+  })
+})
+
 describe('remember — durable memory round-trip', () => {
   it('saves a fact and recalls it', async () => {
     await executeTool('save_memory', {

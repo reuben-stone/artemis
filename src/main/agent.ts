@@ -70,7 +70,8 @@ export const AUTO_ALLOW = new Set([
   'pr_queue',
   'tasks_view',
   'calendar_view',
-  'plan_my_day'
+  'plan_my_day',
+  'show_panel'
 ])
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
@@ -550,6 +551,22 @@ const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'show_panel',
+    description:
+      "Drive your own interface: open or focus a panel so the user SEES it, not just reads a description of it. Use for 'show me the PR queue', 'open my calendar', 'pull up the briefing', 'open settings'. You can still summarise in words alongside opening it. (briefing = the ecosystem-status card.)",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        panel: {
+          type: 'string',
+          enum: ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal'],
+          description: 'Which panel to open.'
+        }
+      },
+      required: ['panel']
+    }
+  },
+  {
     name: 'dispatch_worker',
     description:
       'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
@@ -1006,6 +1023,17 @@ function toolPlanMyDay(input: { day?: string }): string {
   return [`Planning input for ${dayLabel(day)} — synthesise a focused plan from this:`, '', toolTasksView({ day }), '', toolCalendarView({ day })].join('\n')
 }
 
+const PANELS = ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal']
+
+/** Drive the face: ask the renderer to open a panel so the user sees it, not just reads it. */
+function toolShowPanel(input: { panel?: string }, ctx?: ToolContext): string {
+  const panel = String(input.panel ?? '')
+  if (!PANELS.includes(panel)) return `Unknown panel '${panel}'. Valid panels: ${PANELS.join(', ')}.`
+  if (!ctx?.emit) return 'Cannot open panels right now (no UI attached).'
+  ctx.emit({ ui: { panel } })
+  return `Opened the ${panel.replace('_', ' ')} panel for the user.`
+}
+
 /** A snapshot of the user's live desktop/OS context — a sense a terminal tool lacks. */
 async function toolSystemContext(): Promise<string> {
   const lines: string[] = []
@@ -1128,7 +1156,17 @@ async function toolEcosystemStatus(): Promise<string> {
   return `Ecosystem status — ${projects.length} project(s):\n\n${rows.join('\n\n')}`
 }
 
-export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+// Optional execution context — lets a few tools reach back to the face (e.g. drive the
+// UI). Most tools ignore it; the default is a no-op so existing callers/tests are unaffected.
+export interface ToolContext {
+  emit?: AgentEmit
+}
+
+export async function executeTool(
+  name: string,
+  input: Record<string, unknown>,
+  ctx?: ToolContext
+): Promise<string> {
   switch (name) {
     case 'Read':
       return toolRead(input as Parameters<typeof toolRead>[0])
@@ -1176,6 +1214,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       return toolEventRemove(input as Parameters<typeof toolEventRemove>[0])
     case 'plan_my_day':
       return toolPlanMyDay(input as Parameters<typeof toolPlanMyDay>[0])
+    case 'show_panel':
+      return toolShowPanel(input as { panel?: string }, ctx)
     case 'dispatch_worker':
       return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:
@@ -1524,7 +1564,7 @@ export async function runAgent(
 
         // Execute
         try {
-          const result = await executeTool(block.name, toolInput)
+          const result = await executeTool(block.name, toolInput, { emit: send })
           endTool('ok', result)
           toolResults.push({
             type: 'tool_result',

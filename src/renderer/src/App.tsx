@@ -91,6 +91,9 @@ export default function App() {
   // (send's identity changes when voiceOn/speak change; a ref always has the current one.)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sendRef = useRef<(text: string) => Promise<void>>(null as any)
+  // Latest agent-driven-UI handler, so the once-mounted event listener always calls the
+  // current closure (which captures the current open* handlers).
+  const uiPanelRef = useRef<(panel: string) => void>(() => {})
   // Tokens arrive faster than we want to re-render markdown; coalesce a burst into
   // a single paint per animation frame so the transcript streams smoothly.
   const flushRaf = useRef<number | null>(null)
@@ -376,6 +379,7 @@ export default function App() {
         if (flushRaf.current == null) flushRaf.current = requestAnimationFrame(flushStream)
       }
       if (typeof e.cost === 'number') setCost((c) => c + e.cost!)
+      if (e.ui && typeof e.ui.panel === 'string') uiPanelRef.current(e.ui.panel)
       if (e.tool) {
         const t = e.tool
         setMessages((m) => {
@@ -532,6 +536,34 @@ export default function App() {
     setShowBriefing(true)
     if (!briefingData && !briefingLoading) void runBriefingNow()
   }, [briefingData, briefingLoading, runBriefingNow])
+
+  // Agent-driven UI: open a panel the agent asked for via the show_panel tool.
+  const handleUiPanel = useCallback(
+    (panel: string) => {
+      switch (panel) {
+        case 'pr_queue':
+          void openPrs()
+          break
+        case 'briefing':
+          openBriefing()
+          break
+        case 'calendar':
+          setShowCalendar(true)
+          break
+        case 'projects':
+          void openProjects()
+          break
+        case 'settings':
+          void openSettings()
+          break
+        case 'terminal':
+          setShowTerminal(true)
+          break
+      }
+    },
+    [openPrs, openBriefing, openProjects, openSettings]
+  )
+  uiPanelRef.current = handleUiPanel
 
   // Voice input (Phase 1 — ears). Capture drives the orb amplitude from your live
   // voice; transcription is a swappable seam (agent/transcribe.ts). On a final
