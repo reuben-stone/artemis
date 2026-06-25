@@ -19,6 +19,7 @@ import {
   startNewConversation,
   undoNewConversation,
   getActiveProjectPath,
+  setActiveProjectPath,
   getActiveProject,
   listProjects,
   getProjectGaProps,
@@ -71,7 +72,8 @@ export const AUTO_ALLOW = new Set([
   'tasks_view',
   'calendar_view',
   'plan_my_day',
-  'show_panel'
+  'show_panel',
+  'switch_project'
 ])
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
@@ -559,11 +561,23 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         panel: {
           type: 'string',
-          enum: ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal'],
-          description: 'Which panel to open.'
+          enum: ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal', 'rail'],
+          description: 'Which panel to open. "rail" expands the left HUD rail.'
         }
       },
       required: ['panel']
+    }
+  },
+  {
+    name: 'switch_project',
+    description:
+      "Switch the ACTIVE project — the repo your file tools (Bash/Glob/Grep/Read/Edit) operate in — and highlight it in the UI. Use when the user says 'switch to X', 'work on X', or a task clearly targets a specific repo. Names match loosely. Changes your working context from this point on, so do it before acting on that repo.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Project name or path (loose match).' }
+      },
+      required: ['project']
     }
   },
   {
@@ -1023,7 +1037,7 @@ function toolPlanMyDay(input: { day?: string }): string {
   return [`Planning input for ${dayLabel(day)} — synthesise a focused plan from this:`, '', toolTasksView({ day }), '', toolCalendarView({ day })].join('\n')
 }
 
-const PANELS = ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal']
+const PANELS = ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal', 'rail']
 
 /** Drive the face: ask the renderer to open a panel so the user sees it, not just reads it. */
 function toolShowPanel(input: { panel?: string }, ctx?: ToolContext): string {
@@ -1031,7 +1045,24 @@ function toolShowPanel(input: { panel?: string }, ctx?: ToolContext): string {
   if (!PANELS.includes(panel)) return `Unknown panel '${panel}'. Valid panels: ${PANELS.join(', ')}.`
   if (!ctx?.emit) return 'Cannot open panels right now (no UI attached).'
   ctx.emit({ ui: { panel } })
-  return `Opened the ${panel.replace('_', ' ')} panel for the user.`
+  return panel === 'rail' ? 'Expanded the HUD rail for the user.' : `Opened the ${panel.replace('_', ' ')} panel for the user.`
+}
+
+/** Switch the active project (file-tool cwd) and highlight it in the UI. */
+function toolSwitchProject(input: { project?: string }, ctx?: ToolContext): string {
+  const q = String(input.project ?? '').trim().toLowerCase()
+  if (!q) return 'Which project? Give a name or path.'
+  const projects = listProjects()
+  const match =
+    projects.find((p) => p.path.toLowerCase() === q) ??
+    projects.find((p) => p.name.toLowerCase() === q) ??
+    projects.find((p) => p.name.toLowerCase().includes(q)) ??
+    projects.find((p) => p.path.toLowerCase().includes(q))
+  if (!match) return `No project matches '${input.project}'. Known projects: ${projects.map((p) => p.name).join(', ')}.`
+  setActiveProjectPath(match.path)
+  invalidateSystemCache() // the active project is baked into the system prompt
+  ctx?.emit?.({ ui: { project: match.path } })
+  return `Switched the active project to ${match.name} (${match.path}). Your file tools now operate there.`
 }
 
 /** A snapshot of the user's live desktop/OS context — a sense a terminal tool lacks. */
@@ -1216,6 +1247,8 @@ export async function executeTool(
       return toolPlanMyDay(input as Parameters<typeof toolPlanMyDay>[0])
     case 'show_panel':
       return toolShowPanel(input as { panel?: string }, ctx)
+    case 'switch_project':
+      return toolSwitchProject(input as { project?: string }, ctx)
     case 'dispatch_worker':
       return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:
