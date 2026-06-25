@@ -34,7 +34,13 @@ import {
   listEvents,
   listEventsRange,
   updateEvent,
-  removeEvent
+  removeEvent,
+  getPermissionMode,
+  setPermissionMode,
+  allowCommand,
+  isCommandAllowed,
+  listAllowedCommands,
+  clearAllowedCommands
 } from '../src/main/store'
 
 /**
@@ -212,5 +218,31 @@ describe('local calendar', () => {
 
     removeEvent(e.id)
     expect(listEvents('2026-06-25')).toEqual([])
+  })
+})
+
+describe('permission mode + command allowlist', () => {
+  it('defaults to smart and round-trips the mode', () => {
+    expect(getPermissionMode()).toBe('smart')
+    setPermissionMode('guarded')
+    expect(getPermissionMode()).toBe('guarded')
+  })
+
+  it('remembers blessed commands per project, dedups, and scopes correctly', () => {
+    allowCommand('/repos/web', 'npm test')
+    allowCommand('/repos/web', 'npm test') // idempotent — no duplicate row
+    expect(listAllowedCommands().length).toBe(1)
+
+    // Only matches the same command in the same project (or a global '' entry).
+    expect(isCommandAllowed('/repos/web', 'npm test')).toBe(true)
+    expect(isCommandAllowed('/repos/scanner', 'npm test')).toBe(false)
+    expect(isCommandAllowed('/repos/web', 'npm run build')).toBe(false)
+
+    // A global allowance ('') applies everywhere.
+    allowCommand('', 'git status')
+    expect(isCommandAllowed('/repos/anything', 'git status')).toBe(true)
+
+    clearAllowedCommands()
+    expect(listAllowedCommands()).toEqual([])
   })
 })

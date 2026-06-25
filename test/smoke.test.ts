@@ -9,7 +9,8 @@ import {
   AUTO_ALLOW,
   buildMessages,
   executeTool,
-  clampToolOutput
+  clampToolOutput,
+  isSafeReadOnly
 } from '../src/main/agent'
 import { toOllamaMessages } from '../src/main/model/ollama'
 import { parseGitRemote } from '../src/main/github'
@@ -61,6 +62,30 @@ describe('gate — danger blocklist & auto-allow set', () => {
     expect(AUTO_ALLOW.has('save_memory')).toBe(true)
     expect(AUTO_ALLOW.has('Bash')).toBe(false)
     expect(AUTO_ALLOW.has('Write')).toBe(false)
+  })
+})
+
+describe('gate — safe read-only command classifier (Smart mode)', () => {
+  it('auto-approves obviously read-only commands', () => {
+    for (const c of ['ls -la src', 'pwd', 'cat package.json', 'date +%Y-%m-%d', 'git status', 'git log -5', 'git diff HEAD', 'node -v', 'npm ls']) {
+      expect(isSafeReadOnly(c)).toBe(true)
+    }
+  })
+  it('refuses anything that could chain, redirect, or write', () => {
+    for (const c of [
+      'rm file.txt', // a writer/deleter
+      'npm install left-pad', // installs/executes
+      'git commit -m x', // mutates
+      'git config user.name Bob', // a set, not a get
+      'git branch new-feature', // creates a ref
+      'echo hi > out.txt', // redirect (write)
+      'cat a | tee b', // pipe to a writer
+      'ls && rm x', // chaining
+      'python3 -c "print(1)"', // arbitrary code
+      'date 2>/dev/null || python3 -c "x"' // the compound from the screenshot
+    ]) {
+      expect(isSafeReadOnly(c)).toBe(false)
+    }
   })
 })
 

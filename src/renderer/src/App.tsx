@@ -11,8 +11,8 @@ import { BriefingCard } from './components/BriefingCard'
 import { HudRail } from './components/HudRail'
 import { CalendarView } from './components/CalendarView'
 import { CommandPalette, type Command } from './components/CommandPalette'
-import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign } from 'lucide-react'
-import type { Project, PrReview, GaProp, BriefingData } from '../../preload'
+import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign, Shield, ShieldCheck, ShieldAlert } from 'lucide-react'
+import type { Project, PrReview, GaProp, BriefingData, PermissionDecision, PermissionState } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
@@ -58,6 +58,10 @@ export default function App() {
   // CRUD'd tickets/events via its tools during the turn.
   const [hudRefresh, setHudRefresh] = useState(0)
   const [showCalendar, setShowCalendar] = useState(false) // full calendar modal
+  // Interactive permission posture: persisted mode (guarded/smart) + a session-only
+  // "trusted" override. The effective state drives how many prompts you see.
+  const [permMode, setPermMode] = useState<'guarded' | 'smart'>('smart')
+  const [permTrusted, setPermTrusted] = useState(false)
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -443,10 +447,36 @@ export default function App() {
     }
   }, [])
 
-  const respondPermission = (allow: boolean) => {
-    if (permission) window.artemis?.agent?.respondPermission(permission.permId, allow)
+  const respondPermission = (decision: PermissionDecision) => {
+    if (permission) window.artemis?.agent?.respondPermission(permission.permId, decision)
     setPermission(null)
   }
+
+  // Load the permission posture on boot.
+  useEffect(() => {
+    window.artemis?.permissions?.get().then((s) => {
+      if (!s) return
+      setPermMode(s.mode)
+      setPermTrusted(s.trusted)
+    })
+  }, [])
+
+  // Cycle the posture: guarded → smart → trusted (session) → guarded. "Trusted" is
+  // session-only (auto-approves all but hard-dangerous), so it's a separate flag.
+  const effectivePerm: 'guarded' | 'smart' | 'trusted' = permTrusted ? 'trusted' : permMode
+  const cyclePermission = useCallback(async () => {
+    let next: PermissionState | undefined
+    if (effectivePerm === 'guarded') next = await window.artemis?.permissions?.setMode('smart')
+    else if (effectivePerm === 'smart') next = await window.artemis?.permissions?.setTrusted(true)
+    else {
+      await window.artemis?.permissions?.setTrusted(false)
+      next = await window.artemis?.permissions?.setMode('guarded')
+    }
+    if (next) {
+      setPermMode(next.mode)
+      setPermTrusted(next.trusted)
+    }
+  }, [effectivePerm])
 
   const onQueue = useCallback((text: string) => {
     queueRef.current.push(text)
@@ -687,6 +717,20 @@ export default function App() {
             title="Start a new conversation (keeps history)"
           >
             <MessageSquarePlus size={14} /> New chat
+          </button>
+          <button
+            className={`perm-btn perm-${effectivePerm}`}
+            onClick={() => void cyclePermission()}
+            title={
+              effectivePerm === 'guarded'
+                ? 'Permissions: Guarded — Artemis asks before every command. Click for Smart.'
+                : effectivePerm === 'smart'
+                  ? 'Permissions: Smart — safe read-only commands run without asking. Click for Trusted (this session).'
+                  : 'Permissions: Trusted (this session) — auto-runs everything except hard-dangerous commands. Click to return to Guarded.'
+            }
+          >
+            {effectivePerm === 'guarded' ? <Shield size={14} /> : effectivePerm === 'smart' ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+            <span className="btn-tag">{effectivePerm}</span>
           </button>
           <button
             className="conn-btn"
