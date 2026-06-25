@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, RefreshCw, Loader2, Sunrise, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, RefreshCw, Loader2, Sunrise, ChevronDown, ChevronRight, ExternalLink, GitCommitHorizontal } from 'lucide-react'
 import type { BriefingData } from '../../../preload'
 
 /**
@@ -51,12 +51,28 @@ export function BriefingCard({
             return (
               <div className="brief-proj" key={p.name}>
                 <div className="brief-proj-head">
-                  <span className="brief-proj-name">{p.name}</span>
+                  {p.url ? (
+                    <a className="brief-proj-name link" href={p.url} target="_blank" rel="noreferrer" title="Open repo on GitHub">
+                      {p.name}
+                    </a>
+                  ) : (
+                    <span className="brief-proj-name">{p.name}</span>
+                  )}
                   <span className="brief-proj-meta">
                     {p.branch}
                     {p.activity7d ? ` · ${p.activity7d} commits/7d` : ''}
                   </span>
                 </div>
+                {p.lastCommit &&
+                  (p.lastCommit.url ? (
+                    <a className="brief-commit link" href={p.lastCommit.url} target="_blank" rel="noreferrer" title="View commit on GitHub">
+                      <GitCommitHorizontal size={11} /> {p.lastCommit.text} <ExternalLink size={9} />
+                    </a>
+                  ) : (
+                    <span className="brief-commit">
+                      <GitCommitHorizontal size={11} /> {p.lastCommit.text}
+                    </span>
+                  ))}
 
                 {p.analytics.length > 0 && (
                   <div className="brief-section">
@@ -86,10 +102,11 @@ export function BriefingCard({
                 {isOpen && (
                   <div className="brief-detail">
                     {p.prs.map((pr) => (
-                      <div className="brief-pr" key={pr.number}>
+                      <a className="brief-pr link" key={pr.number} href={pr.url} target="_blank" rel="noreferrer" title="Open PR on GitHub">
                         #{pr.number} {pr.title}
                         {pr.agent && <span className="brief-agent">agent</span>}
-                      </div>
+                        <ExternalLink size={10} />
+                      </a>
                     ))}
                     {p.dirty.length > 0 && (
                       <div className="brief-dirty-group">

@@ -730,6 +730,19 @@ html, body, #root {
 .hud-eco-chip { font-size: 10px; padding: 1px 6px; border-radius: 7px; color: var(--accent-bright); background: rgba(var(--accent-rgb), 0.1); }
 .hud-eco-chip.warn { color: #f0b429; background: #f0b4291a; }
 .hud-eco-chip.dim { color: var(--muted); background: rgba(255, 255, 255, 0.05); }
+.hud-eco-commit { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--muted); max-width: 100%; overflow: hidden; }
+.hud-eco-commit svg { flex: none; }
+.hud-eco-commit-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* clickable GitHub links inside HUD/briefing cards — inherit color, accent on hover */
+.brief-proj a.link,
+.hud-eco a.link { color: inherit; text-decoration: none; cursor: pointer; }
+.brief-proj a.link:hover,
+.hud-eco a.link:hover { color: var(--accent-bright); }
+.brief-proj a.link svg,
+.hud-eco a.link svg { opacity: 0.55; }
+.brief-commit { display: inline-flex; align-items: center; gap: 5px; font-family: Menlo, monospace; font-size: 10px; color: var(--muted); margin: 2px 0 2px; overflow-wrap: anywhere; }
+.brief-commit svg { flex: none; opacity: 0.7; }
 
 /* Dock — a layer in the orb window for dismissable ambient cards (briefing, …). */
 .orb-dock {

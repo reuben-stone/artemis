@@ -19,11 +19,12 @@ export interface GaProp {
 
 export interface BriefingProject {
   name: string
+  url: string | null
   branch: string | null
   dirty: string[]
   activity7d: number
-  lastCommit: string | null
-  prs: Array<{ number: number; title: string; agent: boolean }>
+  lastCommit: { text: string; url: string | null } | null
+  prs: Array<{ number: number; title: string; agent: boolean; url: string }>
   analytics: Array<{
     label: string
     users: number
