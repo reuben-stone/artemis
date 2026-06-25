@@ -4,6 +4,8 @@ import { join, dirname, resolve } from 'path'
 import { promises as fs } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import os from 'node:os'
+import { promises as dnsp } from 'node:dns'
 import { glob } from 'glob'
 import { getModelClient, type ModelFinal } from './model'
 import { runWorker } from './worker'
@@ -44,7 +46,8 @@ export const AUTO_ALLOW = new Set([
   'save_memory',
   'recall_memory',
   'WebFetch',
-  'ecosystem_status'
+  'ecosystem_status',
+  'system_context'
 ])
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
@@ -350,6 +353,16 @@ const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'system_context',
+    description:
+      "Snapshot of the user's live desktop/OS context: local time, machine, active project, the frontmost app, battery, and network status. Call this when the answer depends on what the user is doing or the machine's state right now — e.g. 'what am I working on', 'what app am I in', 'am I on battery', 'are you online'. Read-only; a desktop sense a terminal tool doesn't have.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: []
+    }
+  },
+  {
     name: 'dispatch_worker',
     description:
       'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
@@ -615,6 +628,60 @@ async function toolDispatchWorker(input: {
     : `Worker did not open a PR for "${match.name}": ${result.error}`
 }
 
+/** Quick, bounded network reachability check (DNS) so the tool never hangs. */
+async function checkOnline(): Promise<boolean> {
+  try {
+    await Promise.race([
+      dnsp.lookup('apple.com'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
+    ])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** A snapshot of the user's live desktop/OS context — a sense a terminal tool lacks. */
+async function toolSystemContext(): Promise<string> {
+  const lines: string[] = []
+  lines.push(`Time: ${new Date().toString()}`)
+  lines.push(`Machine: ${os.hostname()} (${process.platform}/${os.arch()}, ${Math.round(os.totalmem() / 1e9)}GB RAM)`)
+
+  try {
+    const active = getActiveProject()
+    if (active) lines.push(`Active project: ${active.name} — ${active.path}`)
+  } catch {
+    /* registry not ready */
+  }
+
+  if (process.platform === 'darwin') {
+    // Frontmost app — best effort; needs macOS Automation permission (prompts once).
+    try {
+      const app = (
+        await execAsync(
+          `osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`,
+          { timeout: 4000 }
+        )
+      ).stdout.trim()
+      if (app) lines.push(`Frontmost app: ${app}`)
+    } catch {
+      lines.push('Frontmost app: unavailable (needs macOS Automation permission)')
+    }
+    // Battery — no permission needed.
+    try {
+      const batt = (await execAsync('pmset -g batt', { timeout: 4000 })).stdout
+      const pct = batt.match(/(\d+)%/)?.[1]
+      const state = /AC Power/.test(batt) ? 'on AC' : /Battery Power/.test(batt) ? 'on battery' : ''
+      if (pct) lines.push(`Battery: ${pct}%${state ? ` (${state})` : ''}`)
+    } catch {
+      /* not a laptop / pmset unavailable */
+    }
+  }
+
+  lines.push(`Network: ${(await checkOnline()) ? 'online' : 'offline'}`)
+  return lines.join('\n')
+}
+
 /** Cross-repo git overview of every registered project — the morning-review data. */
 async function toolEcosystemStatus(): Promise<string> {
   const projects = listProjects()
@@ -718,6 +785,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       return toolRecallMemory()
     case 'ecosystem_status':
       return toolEcosystemStatus()
+    case 'system_context':
+      return toolSystemContext()
     case 'dispatch_worker':
       return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:
