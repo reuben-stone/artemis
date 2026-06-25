@@ -9,6 +9,7 @@ import { PrReviewQueue } from './components/PrReviewQueue'
 import { SettingsModal } from './components/SettingsModal'
 import { BriefingCard } from './components/BriefingCard'
 import { HudRail } from './components/HudRail'
+import { CalendarView } from './components/CalendarView'
 import { CommandPalette, type Command } from './components/CommandPalette'
 import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign } from 'lucide-react'
 import type { Project, PrReview, GaProp, BriefingData } from '../../preload'
@@ -56,6 +57,7 @@ export default function App() {
   // Bumped each time a turn settles so the HUD rail refetches — Artemis may have
   // CRUD'd tickets/events via its tools during the turn.
   const [hudRefresh, setHudRefresh] = useState(0)
+  const [showCalendar, setShowCalendar] = useState(false) // full calendar modal
   // Which brain runs turns: 'anthropic' (metered cloud) or 'ollama' (local / brain box).
   const [backend, setBackend] = useState('anthropic')
   const [ollamaHost, setOllamaHost] = useState('http://localhost:11434')
@@ -701,7 +703,11 @@ export default function App() {
 
       <div className="stage">
         <section className="orb-pane">
-          <HudRail refreshSignal={hudRefresh} onAsk={(p) => void send(p)} />
+          <HudRail
+            refreshSignal={hudRefresh}
+            onAsk={(p) => void send(p)}
+            onOpenCalendar={() => setShowCalendar(true)}
+          />
           <div className="orb-stage">
             <Orb state={state} amplitudeRef={amplitudeRef} />
             {showBriefing && (
@@ -783,6 +789,10 @@ export default function App() {
           onSelect={selectProject}
           onClose={() => setShowProjects(false)}
         />
+      )}
+
+      {showCalendar && (
+        <CalendarView onChanged={() => setHudRefresh((n) => n + 1)} onClose={() => setShowCalendar(false)} />
       )}
 
       {showCmdk && <CommandPalette commands={commands} onClose={() => setShowCmdk(false)} />}
