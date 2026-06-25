@@ -616,11 +616,15 @@ export default function App() {
       }))
   ]
 
-  // Native File ▸ New Chat → same as the toolbar button.
+  // Native menu items → same as the toolbar buttons.
   useEffect(() => {
     const off = window.artemis?.menu?.onNewChat(() => void newConversation())
     return () => off?.()
   }, [newConversation])
+  useEffect(() => {
+    const off = window.artemis?.menu?.onSettings(() => void openSettings())
+    return () => off?.()
+  }, [openSettings])
 
   if (needsKey) {
     return <KeySetup onDone={() => setNeedsKey(false)} />

@@ -224,6 +224,11 @@ const api = {
       const handler = (): void => cb()
       ipcRenderer.on('menu:new-chat', handler)
       return () => ipcRenderer.removeListener('menu:new-chat', handler)
+    },
+    onSettings: (cb: () => void) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('menu:settings', handler)
+      return () => ipcRenderer.removeListener('menu:settings', handler)
     }
   }
 }
