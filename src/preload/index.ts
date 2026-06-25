@@ -269,7 +269,7 @@ const api = {
       ipcRenderer.invoke('screen:sources'),
     capture: (
       sourceId: string
-    ): Promise<{ dataUrl: string; mediaType: string; name: string } | null> =>
+    ): Promise<{ dataUrl: string; mediaType: string; name: string } | { error: string } | null> =>
       ipcRenderer.invoke('screen:capture', sourceId)
   },
   menu: {

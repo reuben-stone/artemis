@@ -22,6 +22,7 @@ export function ScreenPicker({
   const [loading, setLoading] = useState(true)
   const [sources, setSources] = useState<Source[]>([])
   const [capturing, setCapturing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -48,12 +49,19 @@ export function ScreenPicker({
 
   const pick = async (id: string): Promise<void> => {
     setCapturing(true)
+    setError(null)
     try {
       const shot = await window.artemis?.screen?.capture(id)
-      if (shot?.dataUrl) {
+      if (shot && 'dataUrl' in shot && shot.dataUrl) {
         onCapture(shot.dataUrl)
         onClose()
+      } else {
+        // A failed capture used to return null and silently leave the modal sitting
+        // there — now we surface why instead of "nothing happens".
+        setError((shot && 'error' in shot && shot.error) || 'Capture failed — try again.')
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Capture failed — try again.')
     } finally {
       setCapturing(false)
     }
@@ -97,6 +105,8 @@ export function ScreenPicker({
               </button>
             </div>
           )}
+
+          {error && <div className="screen-msg screen-err">{error}</div>}
 
           {!loading && hasSources && (
             <div className={`screen-grid ${capturing ? 'busy' : ''}`}>

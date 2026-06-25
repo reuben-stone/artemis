@@ -1309,6 +1309,14 @@ html, body, #root {
   line-height: 1.5;
 }
 .screen-msg p { margin: 0; }
+.screen-err {
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  color: #ffb3bb;
+  background: rgba(255, 93, 108, 0.1);
+  border: 1px solid rgba(255, 93, 108, 0.3);
+}
 .screen-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
