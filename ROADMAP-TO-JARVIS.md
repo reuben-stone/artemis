@@ -293,10 +293,26 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 *A presence, not a window.*
 
 - **Ambient mode** — small always-on-top orb that listens and glances, expands on interaction
+- **Left-rail HUD sidebar (Artemis-managed widgets)** — a collapsible rail in the orb window
+  (the orb pane is mostly empty) hosting *data-backed, agent-managed* cards, not decoration:
+  - **Ops first (the mission anchor):** the existing PR Review Queue, briefing, and a live
+    ecosystem/status widget become the first rail cards — the ops HUD.
+  - **Then personal productivity:** a **tasks/todo list** (local-first SQLite, Artemis CRUDs
+    it via tools like it does the project registry), **today's calendar** (real data via the
+    Phase 5 reach connector — Google Calendar), and a **"plan my day" card** Artemis
+    synthesizes from tasks + calendar + ecosystem state. This is what the "Plan my day"
+    starter chip implies — make it real, not aspirational.
+  - Framing: productivity widgets build *on* the ops HUD, not a detour from the multi-repo
+    mission.
+- **Agent-driven UI (panel actions)** — tools that let Artemis *drive the interface*, not just
+  emit text: open/focus a card ("show me the PR queue" opens the queue), highlight a project,
+  surface a result visually. Closes the gap where Artemis can read the PR queue (`pr_queue`)
+  but can't *show* it.
 - **Glanceable widgets** — current task, calendar, notifications, system status around the orb
-- **Richer chat** — collapsible tool calls, diffs, inline media, command palette
-- **Theming & settings** surface — all renderer, safe to iterate live
-- **Done when:** Artemis feels like part of the desktop, not an app you open
+- **Richer chat** — ✅ collapsible tool calls + diffs, ✅ command palette; inline media TODO
+- **Theming & settings** surface — ✅ accent theming; light theme TODO
+- **Done when:** Artemis feels like part of the desktop, not an app you open — and the rail is
+  a live cockpit (PRs, ecosystem, calendar, day-plan) Artemis keeps current and you act on.
 
 ## Phase 8 — Local model integration 🔴
 *The brain becomes yours.*
