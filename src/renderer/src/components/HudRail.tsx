@@ -58,6 +58,18 @@ export function HudRail({
     localStorage.setItem('artemis.hud.width', String(width))
   }, [width])
 
+  // The agent can expand the rail (show_panel 'rail') via a window event from App.
+  useEffect(() => {
+    const onHud = (e: Event): void => {
+      if ((e as CustomEvent).detail === 'expand') {
+        setCollapsed(false)
+        localStorage.setItem('artemis.hud.collapsed', '0')
+      }
+    }
+    window.addEventListener('artemis:hud', onHud)
+    return () => window.removeEventListener('artemis:hud', onHud)
+  }, [])
+
   const startResize = useCallback(
     (e: ReactMouseEvent) => {
       e.preventDefault()

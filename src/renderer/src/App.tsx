@@ -93,7 +93,7 @@ export default function App() {
   const sendRef = useRef<(text: string) => Promise<void>>(null as any)
   // Latest agent-driven-UI handler, so the once-mounted event listener always calls the
   // current closure (which captures the current open* handlers).
-  const uiPanelRef = useRef<(panel: string) => void>(() => {})
+  const uiPanelRef = useRef<(ui: { panel?: string; project?: string }) => void>(() => {})
   // Tokens arrive faster than we want to re-render markdown; coalesce a burst into
   // a single paint per animation frame so the transcript streams smoothly.
   const flushRaf = useRef<number | null>(null)
@@ -379,7 +379,7 @@ export default function App() {
         if (flushRaf.current == null) flushRaf.current = requestAnimationFrame(flushStream)
       }
       if (typeof e.cost === 'number') setCost((c) => c + e.cost!)
-      if (e.ui && typeof e.ui.panel === 'string') uiPanelRef.current(e.ui.panel)
+      if (e.ui) uiPanelRef.current(e.ui)
       if (e.tool) {
         const t = e.tool
         setMessages((m) => {
@@ -537,10 +537,11 @@ export default function App() {
     if (!briefingData && !briefingLoading) void runBriefingNow()
   }, [briefingData, briefingLoading, runBriefingNow])
 
-  // Agent-driven UI: open a panel the agent asked for via the show_panel tool.
-  const handleUiPanel = useCallback(
-    (panel: string) => {
-      switch (panel) {
+  // Agent-driven UI: open a panel / expand the rail / reflect a project switch that the
+  // agent triggered via the show_panel or switch_project tool.
+  const handleUi = useCallback(
+    (ui: { panel?: string; project?: string }) => {
+      switch (ui.panel) {
         case 'pr_queue':
           void openPrs()
           break
@@ -559,11 +560,17 @@ export default function App() {
         case 'terminal':
           setShowTerminal(true)
           break
+        case 'rail':
+          window.dispatchEvent(new CustomEvent('artemis:hud', { detail: 'expand' }))
+          break
       }
+      // Agent switched the active project — refresh the registry so the titlebar +
+      // projects panel reflect the new active highlight.
+      if (ui.project) window.artemis?.projects?.list().then((p) => p && setProjects(p))
     },
     [openPrs, openBriefing, openProjects, openSettings]
   )
-  uiPanelRef.current = handleUiPanel
+  uiPanelRef.current = handleUi
 
   // Voice input (Phase 1 — ears). Capture drives the orb amplitude from your live
   // voice; transcription is a swappable seam (agent/transcribe.ts). On a final
