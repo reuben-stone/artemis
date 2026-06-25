@@ -708,6 +708,27 @@ html, body, #root {
 .hud-event-when { color: var(--accent-bright); font-variant-numeric: tabular-nums; flex: none; min-width: 48px; }
 .hud-event-title { color: var(--text); line-height: 1.35; word-break: break-word; }
 
+/* ops cards in the rail — PR queue + ecosystem health */
+.hud-card-head-actions { display: flex; gap: 1px; }
+.hud-pr { display: flex; align-items: flex-start; gap: 7px; padding: 7px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.hud-pr:last-child { border-bottom: none; }
+.hud-pr input[type='checkbox'] { accent-color: #27e0a8; cursor: pointer; margin-top: 2px; flex: none; }
+.hud-pr-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-decoration: none; }
+.hud-pr-title { font-size: 12.5px; color: var(--text); line-height: 1.3; word-break: break-word; }
+.hud-pr-body:hover .hud-pr-title { color: var(--accent-bright); }
+.hud-pr-meta { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--muted); }
+
+.hud-eco { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.hud-eco:last-child { border-bottom: none; }
+.hud-eco-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hud-eco-name { font-size: 12.5px; font-weight: 600; color: var(--text); word-break: break-word; }
+.hud-eco-branch { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; color: var(--muted); flex: none; }
+.hud-eco-branch.dirty { color: #f0b429; }
+.hud-eco-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.hud-eco-chip { font-size: 10px; padding: 1px 6px; border-radius: 7px; color: var(--accent-bright); background: rgba(var(--accent-rgb), 0.1); }
+.hud-eco-chip.warn { color: #f0b429; background: #f0b4291a; }
+.hud-eco-chip.dim { color: var(--muted); background: rgba(255, 255, 255, 0.05); }
+
 /* Dock — a layer in the orb window for dismissable ambient cards (briefing, …). */
 .orb-dock {
   position: absolute;

@@ -11,6 +11,7 @@ import {
   Sparkles,
   RefreshCw
 } from 'lucide-react'
+import { OpsRail } from './OpsRail'
 import type { Todo, CalendarEvent } from '../../../preload'
 
 /**
@@ -29,11 +30,15 @@ const PRIORITY_RANK: Record<string, number> = { high: 0, med: 1, low: 2 }
 export function HudRail({
   refreshSignal,
   onAsk,
-  onOpenCalendar
+  onOpenCalendar,
+  onOpenPrs,
+  onOpenBriefing
 }: {
   refreshSignal: number
   onAsk: (prompt: string) => void
   onOpenCalendar: () => void
+  onOpenPrs: () => void
+  onOpenBriefing: () => void
 }): JSX.Element {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('artemis.hud.collapsed') === '1')
   const [todos, setTodos] = useState<Todo[]>([])
@@ -133,6 +138,9 @@ export function HudRail({
       </div>
 
       <div className="hud-rail-body">
+        {/* Ops first — the mission anchor */}
+        <OpsRail refreshSignal={refreshSignal} onOpenPrs={onOpenPrs} onOpenBriefing={onOpenBriefing} />
+
         {/* Tasks / tickets */}
         <section className="hud-card">
           <div className="hud-card-head">
