@@ -85,10 +85,12 @@ export function ScreenPicker({
           {!loading && !hasSources && (
             <div className="screen-msg">
               <p>
-                No screens available yet — Artemis needs <strong>Screen Recording</strong>{' '}
-                permission. It should now appear in System Settings → Privacy &amp; Security →
-                Screen Recording (in development it's listed as <strong>“Electron”</strong>, not
-                “Artemis”). Enable it, then <strong>restart Artemis</strong> and try again.
+                No screens available yet — <strong>Screen Recording</strong> permission is
+                needed. In System Settings → Privacy &amp; Security → Screen Recording, enable
+                the entry for this app and relaunch. In development the grant is usually
+                attributed to your <strong>terminal app</strong> (e.g. Terminal or iTerm), not
+                “Artemis” — toggle <em>that</em> one and relaunch. For a clean “Artemis” entry,
+                run the packaged <strong>Artemis.app</strong> from /Applications.
               </p>
               <button className="projects-add" onClick={() => window.artemis?.screen?.openPrivacy()}>
                 Open System Settings
