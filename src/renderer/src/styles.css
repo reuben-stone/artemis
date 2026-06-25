@@ -1183,6 +1183,51 @@ html, body, #root {
   white-space: pre;
 }
 
+/* screen-capture source picker */
+.screen-picker { width: min(720px, 92vw); }
+.screen-picker-body { padding: 16px; overflow-y: auto; }
+.screen-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.screen-msg p { margin: 0; }
+.screen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.screen-grid.busy { opacity: 0.5; pointer-events: none; }
+.screen-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: left;
+}
+.screen-source:hover { border-color: rgba(var(--accent-rgb), 0.4); background: rgba(var(--accent-rgb), 0.08); }
+.screen-source img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #000;
+}
+.screen-source-name {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* drag-and-drop overlay */
 .drop-overlay {
   position: absolute;
