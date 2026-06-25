@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { GitPullRequest, Boxes, RefreshCw, Maximize2, ExternalLink, GitBranch } from 'lucide-react'
+import { GitPullRequest, Boxes, RefreshCw, Maximize2, ExternalLink, GitBranch, GitCommitHorizontal } from 'lucide-react'
 import type { PrReview, BriefingData } from '../../../preload'
 
 /**
@@ -110,7 +110,13 @@ export function OpsRail({
           {eco?.projects.map((p) => (
             <div key={p.name} className="hud-eco">
               <div className="hud-eco-top">
-                <span className="hud-eco-name">{p.name}</span>
+                {p.url ? (
+                  <a className="hud-eco-name link" href={p.url} target="_blank" rel="noreferrer" title="Open repo on GitHub">
+                    {p.name}
+                  </a>
+                ) : (
+                  <span className="hud-eco-name">{p.name}</span>
+                )}
                 <span className={`hud-eco-branch ${p.dirty.length ? 'dirty' : ''}`} title={p.branch ?? ''}>
                   <GitBranch size={10} />
                   <span className="hud-eco-branch-name">{p.branch ?? '—'}</span>
@@ -119,9 +125,28 @@ export function OpsRail({
               <div className="hud-eco-meta">
                 {p.dirty.length > 0 && <span className="hud-eco-chip warn">{p.dirty.length} uncommitted</span>}
                 {p.dirty.length === 0 && <span className="hud-eco-chip">clean</span>}
-                {p.prs.length > 0 && <span className="hud-eco-chip">{p.prs.length} open PR{p.prs.length === 1 ? '' : 's'}</span>}
+                {p.prs.length > 0 &&
+                  (p.url ? (
+                    <a className="hud-eco-chip link" href={`${p.url}/pulls`} target="_blank" rel="noreferrer" title="Open PRs on GitHub">
+                      {p.prs.length} open PR{p.prs.length === 1 ? '' : 's'}
+                    </a>
+                  ) : (
+                    <span className="hud-eco-chip">{p.prs.length} open PR{p.prs.length === 1 ? '' : 's'}</span>
+                  ))}
                 <span className="hud-eco-chip dim">{p.activity7d} commit{p.activity7d === 1 ? '' : 's'}/7d</span>
               </div>
+              {p.lastCommit &&
+                (p.lastCommit.url ? (
+                  <a className="hud-eco-commit link" href={p.lastCommit.url} target="_blank" rel="noreferrer" title={p.lastCommit.text}>
+                    <GitCommitHorizontal size={10} />
+                    <span className="hud-eco-commit-text">{p.lastCommit.text}</span>
+                  </a>
+                ) : (
+                  <span className="hud-eco-commit" title={p.lastCommit.text}>
+                    <GitCommitHorizontal size={10} />
+                    <span className="hud-eco-commit-text">{p.lastCommit.text}</span>
+                  </span>
+                ))}
             </div>
           ))}
         </div>

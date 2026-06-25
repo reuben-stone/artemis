@@ -14,11 +14,12 @@ const execp = promisify(exec)
  */
 export interface BriefingProject {
   name: string
+  url: string | null // repo web url — for linking the name, PRs, and commits to GitHub
   branch: string | null
   dirty: string[]
   activity7d: number
-  lastCommit: string | null
-  prs: Array<{ number: number; title: string; agent: boolean }>
+  lastCommit: { text: string; url: string | null } | null
+  prs: Array<{ number: number; title: string; agent: boolean; url: string }>
   analytics: Array<{ label: string } & GaMetrics>
 }
 
@@ -45,23 +46,32 @@ export async function gatherBriefing(): Promise<BriefingData> {
       const status = await git('status --porcelain')
       const dirty = status ? status.split('\n').filter(Boolean).map((l) => l.slice(3)) : []
       const activity7d = (await git("log --since='7 days ago' --oneline")).split('\n').filter(Boolean).length
-      const lastCommit = (await git("log -1 --pretty=format:'%h %s (%cr)'")) || null
+
+      const gh = parseGitRemote(p.remote)
+      const repoUrl = gh?.url ?? null
+
+      // Last commit, with a link to it on GitHub when we know the remote.
+      const lcShort = await git('log -1 --pretty=format:%h')
+      const lcText = (await git("log -1 --pretty=format:'%h %s (%cr)'")) || null
+      const lastCommit = lcText
+        ? { text: lcText, url: lcShort && repoUrl ? `${repoUrl}/commit/${lcShort}` : null }
+        : null
 
       let prs: BriefingProject['prs'] = []
-      const gh = parseGitRemote(p.remote)
       if (gh) {
         try {
           const j = (
             await execp(
-              `gh pr list --repo ${gh.slug} --state open --json number,title,headRefName --limit 20`,
+              `gh pr list --repo ${gh.slug} --state open --json number,title,headRefName,url --limit 20`,
               { cwd: p.path, maxBuffer: 4 * 1024 * 1024 }
             )
           ).stdout.trim()
-          const arr = (j ? JSON.parse(j) : []) as Array<{ number: number; title: string; headRefName: string }>
+          const arr = (j ? JSON.parse(j) : []) as Array<{ number: number; title: string; headRefName: string; url: string }>
           prs = arr.map((pr) => ({
             number: pr.number,
             title: pr.title,
-            agent: !!pr.headRefName?.startsWith('artemis/')
+            agent: !!pr.headRefName?.startsWith('artemis/'),
+            url: pr.url
           }))
         } catch {
           /* gh unavailable / no access */
@@ -79,7 +89,7 @@ export async function gatherBriefing(): Promise<BriefingData> {
         }
       }
 
-      return { name: p.name, branch, dirty, activity7d, lastCommit, prs, analytics }
+      return { name: p.name, url: repoUrl, branch, dirty, activity7d, lastCommit, prs, analytics }
     })
   )
 
