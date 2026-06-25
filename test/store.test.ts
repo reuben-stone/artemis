@@ -24,6 +24,7 @@ import {
   listPrReviews,
   setPrReviewed,
   clearReviewedPrs,
+  pruneBundledProjects,
   addTodo,
   listTodos,
   updateTodo,
@@ -111,6 +112,17 @@ describe('project registry', () => {
     removeProject(web.id) // removing the active one falls back to a remaining project
     expect(getActiveProjectPath()).toBe(selfPath)
     expect(listProjects().length).toBe(1)
+  })
+
+  it('prunes duplicate self rows that point inside a packaged app bundle', () => {
+    addProject('artemis (self)', '/Users/me/Desktop/artemis', null)
+    addProject('artemis (self)', '/Users/me/Desktop/Artemis.app/Contents/Resources/app.asar', null)
+    addProject('artemis (self)', '/Users/me/Desktop/artemis/release/mac/Artemis.app/Contents/Resources/app', null)
+    expect(listProjects().length).toBe(3)
+
+    const dropped = pruneBundledProjects()
+    expect(dropped).toBe(2) // the two bundle paths
+    expect(listProjects().map((p) => p.path)).toEqual(['/Users/me/Desktop/artemis'])
   })
 })
 

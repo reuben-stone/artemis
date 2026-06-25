@@ -729,17 +729,48 @@ export function removeEvent(id: number): void {
   getDb().prepare('DELETE FROM events WHERE id = ?').run(id)
 }
 
+// A path inside a packaged .app bundle / asar — read-only, never an editable repo. Such
+// a path must never be registered as a project; doing so is what spawned the duplicate
+// "artemis (self)" rows when the packaged app was launched from different locations.
+function isBundledPath(p: string): boolean {
+  return /\.app\/Contents\//.test(p) || p.includes('.asar')
+}
+
+/**
+ * Remove registry rows that point inside a packaged app bundle — they can't be opened or
+ * edited, and a self-seed from each launch location piled them up. One-time repair, safe
+ * to run every boot (a clean registry has none). Returns how many were dropped.
+ */
+export function pruneBundledProjects(): number {
+  const rows = getDb().prepare('SELECT id, path FROM projects').all() as Array<{ id: number; path: string }>
+  let removed = 0
+  for (const r of rows) {
+    if (isBundledPath(r.path)) {
+      removeProject(r.id) // reuses the active-project fallback if we drop the active one
+      removed++
+    }
+  }
+  return removed
+}
+
 /** Seed Artemis's own repo as a project on first run so the switcher is never empty. */
 export function ensureSelfProject(): void {
   const db = getDb()
   const selfPath = app.getAppPath()
-  const existing = db.prepare('SELECT id FROM projects WHERE path = ?').get(selfPath)
-  if (!existing) {
-    db.prepare(
-      'INSERT INTO projects (name, path, remote, created_at) VALUES (?, ?, ?, ?)'
-    ).run('artemis (self)', selfPath, null, Date.now())
+  // Only a real source checkout (dev) is a valid self-project. A packaged build's app path
+  // lives inside the read-only bundle, so don't register it.
+  if (!isBundledPath(selfPath)) {
+    const existing = db.prepare('SELECT id FROM projects WHERE path = ?').get(selfPath)
+    if (!existing) {
+      db.prepare('INSERT INTO projects (name, path, remote, created_at) VALUES (?, ?, ?, ?)').run(
+        'artemis (self)',
+        selfPath,
+        null,
+        Date.now()
+      )
+    }
+    if (!getMeta(ACTIVE_PROJECT_KEY)) setMeta(ACTIVE_PROJECT_KEY, selfPath)
   }
-  if (!getMeta(ACTIVE_PROJECT_KEY)) setMeta(ACTIVE_PROJECT_KEY, selfPath)
 }
 
 // --- transcript ---------------------------------------------------------------

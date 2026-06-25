@@ -50,6 +50,7 @@ import {
   getActiveProjectPath,
   setActiveProjectPath,
   ensureSelfProject,
+  pruneBundledProjects,
   getProjectGaProps,
   setProjectGaProps,
   type GaProp,
@@ -546,6 +547,7 @@ app.whenReady().then(() => {
   }
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media')
 
+  pruneBundledProjects() // drop stale "artemis (self)" rows from packaged-bundle paths
   ensureSelfProject() // seed Artemis's own repo so the project switcher is never empty
 
   buildAppMenu() // real File/Edit/View/Window menus with a working Quit
