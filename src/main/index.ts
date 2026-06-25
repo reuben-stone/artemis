@@ -1,4 +1,13 @@
-import { app, shell, BrowserWindow, ipcMain, session, systemPreferences, dialog } from 'electron'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  ipcMain,
+  session,
+  systemPreferences,
+  dialog,
+  desktopCapturer
+} from 'electron'
 import { join, basename } from 'path'
 import os from 'os'
 import { existsSync, readFileSync } from 'fs'
@@ -239,6 +248,34 @@ ipcMain.handle(
 
 // Stop an in-flight turn (Esc / Stop button) — aborts the model stream + tool loop.
 ipcMain.on('agent:cancel', (_e, requestId: string) => cancelTurn(requestId))
+
+// ─── Screen capture (a Sense Claude Code can't have) ───────────────────────
+// macOS gates screen capture behind Screen Recording permission; it can't be granted
+// programmatically and only takes effect after an app restart once toggled in Settings.
+ipcMain.handle('screen:status', () =>
+  process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted'
+)
+ipcMain.handle('screen:openPrivacy', () =>
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+)
+// Small thumbnails for the source picker.
+ipcMain.handle('screen:sources', async () => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen', 'window'],
+    thumbnailSize: { width: 320, height: 200 }
+  })
+  return sources.map((s) => ({ id: s.id, name: s.name, thumbnail: s.thumbnail.toDataURL() }))
+})
+// Full-res still of the chosen source, returned as a PNG data URL.
+ipcMain.handle('screen:capture', async (_e, sourceId: string) => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen', 'window'],
+    thumbnailSize: { width: 1920, height: 1200 }
+  })
+  const src = sources.find((s) => s.id === sourceId)
+  if (!src || src.thumbnail.isEmpty()) return null
+  return { dataUrl: src.thumbnail.toDataURL(), mediaType: 'image/png', name: `${src.name}.png` }
+})
 
 // After a renderer reload (e.g. a hot-reload of Artemis's own UI) the new page asks
 // the main process whether a turn was in flight, and re-attaches to it.

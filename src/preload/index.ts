@@ -206,6 +206,17 @@ const api = {
     },
     respondPermission: (permId: number, allow: boolean) =>
       ipcRenderer.send('agent:permissionResponse', { permId, allow })
+  },
+  screen: {
+    // macOS Screen Recording status: 'granted' | 'denied' | 'restricted' | 'not-determined'.
+    status: (): Promise<string> => ipcRenderer.invoke('screen:status'),
+    openPrivacy: (): Promise<void> => ipcRenderer.invoke('screen:openPrivacy'),
+    sources: (): Promise<{ id: string; name: string; thumbnail: string }[]> =>
+      ipcRenderer.invoke('screen:sources'),
+    capture: (
+      sourceId: string
+    ): Promise<{ dataUrl: string; mediaType: string; name: string } | null> =>
+      ipcRenderer.invoke('screen:capture', sourceId)
   }
 }
 

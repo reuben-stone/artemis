@@ -28,9 +28,11 @@ import {
   Copy,
   Square,
   Paperclip,
-  X
+  X,
+  Monitor
 } from 'lucide-react'
 import type { OrbState } from './Orb'
+import { ScreenPicker } from './ScreenPicker'
 
 export interface ToolStep {
   id: string
@@ -164,6 +166,7 @@ export default function Chat({
 }) {
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [showScreenPicker, setShowScreenPicker] = useState(false)
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0) // nested dragenter/leave events — count to know when truly out
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -177,6 +180,22 @@ export default function Chat({
   }
   const removeAttachment = (id: string): void =>
     setAttachments((cur) => cur.filter((a) => a.id !== id))
+
+  // A screen capture (PNG data URL) becomes an image attachment, then flows like any other.
+  const addCapturedImage = (dataUrl: string): void => {
+    const data = dataUrl.split(',')[1] ?? ''
+    setAttachments((cur) => [
+      ...cur,
+      {
+        id: `${Date.now()}-screen-${Math.random().toString(36).slice(2, 7)}`,
+        kind: 'image',
+        name: 'screen.png',
+        mediaType: 'image/png',
+        data,
+        dataUrl
+      }
+    ])
+  }
   // whether the view is pinned to the bottom; when false the user has
   // scrolled up and we must NOT yank them back down mid-stream.
   const stick = useRef(true)
@@ -461,6 +480,9 @@ export default function Chat({
         <button className="attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach files">
           <Paperclip size={16} />
         </button>
+        <button className="attach-btn" onClick={() => setShowScreenPicker(true)} title="Capture screen">
+          <Monitor size={16} />
+        </button>
         <button
           className={`voice-toggle ${voiceOn ? 'on' : ''}`}
           onClick={onToggleVoice}
@@ -514,6 +536,10 @@ export default function Chat({
           </button>
         )}
       </div>
+
+      {showScreenPicker && (
+        <ScreenPicker onCapture={addCapturedImage} onClose={() => setShowScreenPicker(false)} />
+      )}
     </div>
   )
 }
