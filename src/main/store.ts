@@ -148,6 +148,16 @@ function getDb(): DbLike {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_events_day ON events(day);
+
+    -- Commands the user blessed with "Allow & don't ask again", scoped to a project
+    -- path ('' = everywhere). The permission gate consults this before prompting.
+    CREATE TABLE IF NOT EXISTS allowed_commands (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,
+      command TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(project, command)
+    );
   `)
   return db
 }
@@ -246,6 +256,62 @@ export function getOllamaModel(): string {
 
 export function setOllamaModel(model: string): void {
   setMeta(OLLAMA_MODEL_KEY, model)
+}
+
+// --- permission mode + per-project allowed commands --------------------------
+
+// How the interactive tool gate behaves. Persisted modes are 'guarded' (prompt for
+// every write/exec — the original behaviour) and 'smart' (auto-approve provably-safe
+// read-only commands, prompt for the rest). 'trusted' (auto-approve all but the hard
+// DANGEROUS blocklist) is deliberately session-only — held in memory by the agent, never
+// persisted — so full trust never silently survives a restart.
+export type PermissionMode = 'guarded' | 'smart'
+const PERMISSION_MODE_KEY = 'permission_mode'
+
+export function getPermissionMode(): PermissionMode {
+  return getMeta(PERMISSION_MODE_KEY) === 'guarded' ? 'guarded' : 'smart'
+}
+
+export function setPermissionMode(mode: PermissionMode): void {
+  setMeta(PERMISSION_MODE_KEY, mode)
+}
+
+export interface AllowedCommand {
+  id: number
+  project: string
+  command: string
+  created_at: number
+}
+
+/** Has this exact command been blessed for this project (or globally)? */
+export function isCommandAllowed(project: string, command: string): boolean {
+  const row = getDb()
+    .prepare('SELECT 1 FROM allowed_commands WHERE command = ? AND (project = ? OR project = ?) LIMIT 1')
+    .get(command, project, '')
+  return !!row
+}
+
+/** Remember a command so the same one never re-prompts (scoped to a project, '' = all). */
+export function allowCommand(project: string, command: string): void {
+  getDb()
+    .prepare(
+      'INSERT INTO allowed_commands (project, command, created_at) VALUES (?, ?, ?) ON CONFLICT(project, command) DO NOTHING'
+    )
+    .run(project, command, Date.now())
+}
+
+export function listAllowedCommands(): AllowedCommand[] {
+  return getDb()
+    .prepare('SELECT id, project, command, created_at FROM allowed_commands ORDER BY created_at DESC')
+    .all() as AllowedCommand[]
+}
+
+export function removeAllowedCommand(id: number): void {
+  getDb().prepare('DELETE FROM allowed_commands WHERE id = ?').run(id)
+}
+
+export function clearAllowedCommands(): void {
+  getDb().prepare('DELETE FROM allowed_commands').run()
 }
 
 // --- multi-project registry (the ops-layer spine) ----------------------------

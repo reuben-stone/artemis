@@ -56,6 +56,19 @@ export interface PrReview {
   created_at: number
 }
 
+export type PermissionMode = 'guarded' | 'smart'
+export type PermissionDecision = 'deny' | 'once' | 'always'
+export interface PermissionState {
+  mode: PermissionMode
+  trusted: boolean
+}
+export interface AllowedCommand {
+  id: number
+  project: string
+  command: string
+  created_at: number
+}
+
 export type TodoStatus = 'todo' | 'doing' | 'done'
 
 export interface Todo {
@@ -175,11 +188,11 @@ const api = {
   calendar: {
     list: (opts?: { day?: string; days?: number }): Promise<CalendarEvent[]> =>
       ipcRenderer.invoke('calendar:list', opts ?? {}),
-    add: (input: { day?: string; title: string; starts?: string; ends?: string; notes?: string }): Promise<CalendarEvent> =>
+    add: (input: { day?: string; title: string; starts?: string | null; ends?: string | null; notes?: string | null }): Promise<CalendarEvent> =>
       ipcRenderer.invoke('calendar:add', input),
     update: (
       id: number,
-      patch: { title?: string; day?: string; starts?: string; ends?: string; notes?: string }
+      patch: { title?: string; day?: string; starts?: string | null; ends?: string | null; notes?: string | null }
     ): Promise<CalendarEvent | null> => ipcRenderer.invoke('calendar:update', { id, patch }),
     remove: (id: number): Promise<void> => ipcRenderer.invoke('calendar:remove', id)
   },
@@ -258,8 +271,18 @@ const api = {
       ipcRenderer.on('agent:permission', handler)
       return () => ipcRenderer.removeListener('agent:permission', handler)
     },
-    respondPermission: (permId: number, allow: boolean) =>
-      ipcRenderer.send('agent:permissionResponse', { permId, allow })
+    respondPermission: (permId: number, decision: PermissionDecision) =>
+      ipcRenderer.send('agent:permissionResponse', { permId, decision })
+  },
+  // The interactive permission gate: mode (guarded/smart persisted), a session-only
+  // "trusted" override, and the saved "don't ask again" command allowlist.
+  permissions: {
+    get: (): Promise<PermissionState> => ipcRenderer.invoke('permissions:get'),
+    setMode: (mode: PermissionMode): Promise<PermissionState> => ipcRenderer.invoke('permissions:setMode', mode),
+    setTrusted: (trusted: boolean): Promise<PermissionState> => ipcRenderer.invoke('permissions:setTrusted', trusted),
+    listAllowed: (): Promise<AllowedCommand[]> => ipcRenderer.invoke('permissions:listAllowed'),
+    removeAllowed: (id: number): Promise<AllowedCommand[]> => ipcRenderer.invoke('permissions:removeAllowed', id),
+    clearAllowed: (): Promise<AllowedCommand[]> => ipcRenderer.invoke('permissions:clearAllowed')
   },
   screen: {
     // macOS Screen Recording status: 'granted' | 'denied' | 'restricted' | 'not-determined'.

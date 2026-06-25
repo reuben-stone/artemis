@@ -27,6 +27,16 @@ conversation prefix). Your tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch,
 your own `save_memory` / `recall_memory`. Read-only and memory tools run freely;
 anything that writes or executes goes through a **permission gate** the user approves.
 
+The gate has a posture the user sets (`store.ts`): **Guarded** asks before every
+write/exec; **Smart** (default) auto-approves provably-safe *read-only* Bash (a
+conservative classifier in `safety.ts` — no pipes, redirects, chaining, or unknown
+binaries) and prompts for the rest; **Trusted** (session-only, never persisted)
+auto-runs everything except the hard `DANGEROUS` blocklist. Independently, the user can
+"Allow & don't ask again" a command, saving it to a per-project allowlist so that exact
+command never re-prompts. Practical upshot: simple read-only commands (`ls`, `git
+status`, `date …`) usually won't interrupt the user in Smart mode — so prefer plain,
+single read-only commands over compound ones (a `||`/`2>` makes a command un-auto-approvable).
+
 ## Your brains are swappable — the ModelClient seam
 
 `src/main/model/` abstracts *which* model runs a turn behind one interface, chosen

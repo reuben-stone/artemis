@@ -1,3 +1,5 @@
+import type { PermissionDecision } from '../../../preload'
+
 export interface PermissionReq {
   permId: number
   toolName: string
@@ -23,8 +25,11 @@ export default function PermissionDialog({
   onRespond
 }: {
   req: PermissionReq
-  onRespond: (allow: boolean) => void
+  onRespond: (decision: PermissionDecision) => void
 }) {
+  // "Allow & don't ask again" remembers an exact command, so it only makes sense for
+  // Bash (Write/Edit differ every call — there's nothing stable to remember).
+  const canRemember = req.toolName === 'Bash'
   return (
     <div className="modal-backdrop">
       <div className="modal">
@@ -33,10 +38,15 @@ export default function PermissionDialog({
         </div>
         <pre className="modal-body">{describe(req)}</pre>
         <div className="modal-actions">
-          <button className="btn-deny" onClick={() => onRespond(false)}>
+          <button className="btn-deny" onClick={() => onRespond('deny')}>
             Deny
           </button>
-          <button className="btn-allow" onClick={() => onRespond(true)} autoFocus>
+          {canRemember && (
+            <button className="btn-always" onClick={() => onRespond('always')} title="Run this and never ask for this exact command again (this project)">
+              Allow, don&apos;t ask again
+            </button>
+          )}
+          <button className="btn-allow" onClick={() => onRespond('once')} autoFocus>
             Allow
           </button>
         </div>

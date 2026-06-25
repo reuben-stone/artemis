@@ -382,6 +382,27 @@ html, body, #root {
 .pr-queue-btn:hover { color: var(--text); }
 .pr-queue-btn.on { color: #27e0a8; border-color: #27e0a855; background: #27e0a814; }
 
+/* permission posture toggle — Guarded (neutral) · Smart (accent) · Trusted (amber warn) */
+.perm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px 3px 8px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.perm-btn .btn-tag { margin-right: 0; text-transform: uppercase; }
+.perm-btn:hover { color: var(--text); }
+.perm-smart { color: var(--accent-bright); border-color: rgba(var(--accent-rgb), 0.4); background: rgba(var(--accent-rgb), 0.08); }
+.perm-smart .btn-tag { color: var(--accent-bright); opacity: 1; }
+.perm-trusted { color: #f0b429; border-color: #f0b42955; background: #f0b4291a; }
+.perm-trusted .btn-tag { color: #f0b429; opacity: 1; }
+
 .pr-row {
   display: flex;
   align-items: flex-start;
@@ -1645,7 +1666,7 @@ html, body, #root {
   margin: 0 0 16px;
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.btn-deny, .btn-allow {
+.btn-deny, .btn-allow, .btn-always {
   padding: 9px 18px;
   border-radius: 10px;
   font-size: 13px;
@@ -1656,6 +1677,8 @@ html, body, #root {
   color: var(--text);
 }
 .btn-allow { background: #27e0a8; color: #04120c; border: none; }
+.btn-always { border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent-bright); background: rgba(var(--accent-rgb), 0.08); }
+.btn-always:hover { background: rgba(var(--accent-rgb), 0.16); }
 
 /* key setup screen */
 .keysetup {

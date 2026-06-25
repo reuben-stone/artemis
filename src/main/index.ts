@@ -15,7 +15,17 @@ import { existsSync, readFileSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { loadMemory, saveMemory, type MemoryRecord } from './memory'
-import { runAgent, cancelTurn, getResyncTurn, resetSession, undoSession, invalidateSystemCache } from './agent'
+import {
+  runAgent,
+  cancelTurn,
+  getResyncTurn,
+  resetSession,
+  undoSession,
+  invalidateSystemCache,
+  setSessionTrusted,
+  getSessionTrusted,
+  type PermissionDecision
+} from './agent'
 import { buildAppMenu } from './menu'
 import { gatherBriefing } from './briefing'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
@@ -57,7 +67,13 @@ import {
   addEvent,
   updateEvent,
   removeEvent,
-  type TodoStatus
+  getPermissionMode,
+  setPermissionMode,
+  listAllowedCommands,
+  removeAllowedCommand,
+  clearAllowedCommands,
+  type TodoStatus,
+  type PermissionMode
 } from './store'
 
 const execp = promisify(exec)
@@ -219,14 +235,38 @@ ipcMain.handle('terminal:scrollback', () => loadTerminalScrollback())
 
 // --- Operator (Agent SDK) IPC ---
 let permCounter = 0
-const pendingPerms = new Map<number, (ok: boolean) => void>()
+const pendingPerms = new Map<number, (d: PermissionDecision) => void>()
 
-ipcMain.on('agent:permissionResponse', (_e, { permId, allow }: { permId: number; allow: boolean }) => {
-  const resolve = pendingPerms.get(permId)
-  if (resolve) {
-    pendingPerms.delete(permId)
-    resolve(!!allow)
+ipcMain.on(
+  'agent:permissionResponse',
+  (_e, { permId, decision }: { permId: number; decision: PermissionDecision }) => {
+    const resolve = pendingPerms.get(permId)
+    if (resolve) {
+      pendingPerms.delete(permId)
+      resolve(decision)
+    }
   }
+)
+
+// Permission mode (persisted guarded/smart) + session-only "trusted" + the saved
+// command allowlist. The face reads/sets these; the gate in agent.ts consults them.
+ipcMain.handle('permissions:get', () => ({ mode: getPermissionMode(), trusted: getSessionTrusted() }))
+ipcMain.handle('permissions:setMode', (_e, mode: PermissionMode) => {
+  setPermissionMode(mode)
+  return { mode: getPermissionMode(), trusted: getSessionTrusted() }
+})
+ipcMain.handle('permissions:setTrusted', (_e, trusted: boolean) => {
+  setSessionTrusted(!!trusted)
+  return { mode: getPermissionMode(), trusted: getSessionTrusted() }
+})
+ipcMain.handle('permissions:listAllowed', () => listAllowedCommands())
+ipcMain.handle('permissions:removeAllowed', (_e, id: number) => {
+  removeAllowedCommand(id)
+  return listAllowedCommands()
+})
+ipcMain.handle('permissions:clearAllowed', () => {
+  clearAllowedCommands()
+  return listAllowedCommands()
 })
 
 ipcMain.handle(
@@ -246,7 +286,7 @@ ipcMain.handle(
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) return
   const ask = (req: { toolName: string; input: unknown }) =>
-    new Promise<boolean>((resolve) => {
+    new Promise<PermissionDecision>((resolve) => {
       const permId = ++permCounter
       pendingPerms.set(permId, resolve)
       win.webContents.send('agent:permission', { permId, ...req })
@@ -462,13 +502,15 @@ ipcMain.handle('calendar:list', (_e, { day, days }: { day?: string; days?: numbe
 })
 ipcMain.handle(
   'calendar:add',
-  (_e, input: { day?: string; title: string; starts?: string; ends?: string; notes?: string }) =>
+  (_e, input: { day?: string; title: string; starts?: string | null; ends?: string | null; notes?: string | null }) =>
     addEvent({ ...input, day: input.day || localDay() })
 )
 ipcMain.handle(
   'calendar:update',
-  (_e, { id, patch }: { id: number; patch: { title?: string; day?: string; starts?: string; ends?: string; notes?: string } }) =>
-    updateEvent(id, patch)
+  (
+    _e,
+    { id, patch }: { id: number; patch: { title?: string; day?: string; starts?: string | null; ends?: string | null; notes?: string | null } }
+  ) => updateEvent(id, patch)
 )
 ipcMain.handle('calendar:remove', (_e, id: number) => removeEvent(id))
 

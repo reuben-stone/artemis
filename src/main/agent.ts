@@ -23,6 +23,9 @@ import {
   listProjects,
   getProjectGaProps,
   listPrReviews,
+  getPermissionMode,
+  isCommandAllowed,
+  allowCommand,
   localDay,
   listTodos,
   addTodo,
@@ -51,8 +54,8 @@ const SAY_MARKER = '⟦say⟧'
 
 // Shared safety primitives (also used by the worker loop). Imported for internal use
 // and re-exported so existing importers/tests that reference them via agent.ts work.
-import { DANGEROUS, clampToolOutput } from './safety'
-export { DANGEROUS, clampToolOutput }
+import { DANGEROUS, clampToolOutput, isSafeReadOnly } from './safety'
+export { DANGEROUS, clampToolOutput, isSafeReadOnly }
 
 // Tools that need no permission prompt (read-only + our own memory ops).
 export const AUTO_ALLOW = new Set([
@@ -1299,8 +1302,22 @@ export async function undoSession(): Promise<void> {
 
 // ─── Permission gate ───────────────────────────────────────────────────────
 
+// The user's answer to a prompt: deny, allow this once, or allow and remember it.
+export type PermissionDecision = 'deny' | 'once' | 'always'
+
 export interface PermissionAsker {
-  (req: { toolName: string; input: unknown }): Promise<boolean>
+  (req: { toolName: string; input: unknown }): Promise<PermissionDecision>
+}
+
+// "Trusted" mode is session-only — auto-approve everything except the hard DANGEROUS
+// blocklist, until the next restart. Held here (not persisted) so full trust can never
+// silently carry across launches. The face toggles it via setSessionTrusted.
+let sessionTrusted = false
+export function setSessionTrusted(v: boolean): void {
+  sessionTrusted = v
+}
+export function getSessionTrusted(): boolean {
+  return sessionTrusted
 }
 
 // ─── Main agent loop ───────────────────────────────────────────────────────
@@ -1471,32 +1488,37 @@ export async function runAgent(
 
         // Permission gate
         if (!AUTO_ALLOW.has(block.name)) {
-          if (
-            block.name === 'Bash' &&
-            typeof toolInput.command === 'string' &&
-            DANGEROUS.test(toolInput.command)
-          ) {
+          const bashCmd =
+            block.name === 'Bash' && typeof toolInput.command === 'string' ? toolInput.command : null
+
+          // Hard blocklist — refused in every mode, even "trusted".
+          if (bashCmd && DANGEROUS.test(bashCmd)) {
             const content = 'Refused: destructive command blocked by Artemis.'
             endTool('denied', content)
-            toolResults.push({
-              type: 'tool_result',
-              tool_use_id: block.id,
-              content,
-              is_error: true
-            })
+            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content, is_error: true })
             continue
           }
 
-          const ok = await askPermission({ toolName: block.name, input: toolInput })
-          if (!ok) {
-            endTool('denied', 'Denied by user.')
-            toolResults.push({
-              type: 'tool_result',
-              tool_use_id: block.id,
-              content: 'Denied by user.',
-              is_error: true
-            })
-            continue
+          // Decide whether this call may skip the prompt:
+          //  · trusted (session) → everything but the blocklist above
+          //  · smart → provably-safe read-only Bash commands
+          //  · any mode → a Bash command the user previously blessed for this project
+          const mode = getPermissionMode()
+          const project = activeProjectRoot()
+          const auto =
+            sessionTrusted ||
+            (bashCmd != null &&
+              ((mode === 'smart' && isSafeReadOnly(bashCmd)) || isCommandAllowed(project, bashCmd)))
+
+          if (!auto) {
+            const decision = await askPermission({ toolName: block.name, input: toolInput })
+            if (decision === 'deny') {
+              endTool('denied', 'Denied by user.')
+              toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: 'Denied by user.', is_error: true })
+              continue
+            }
+            // "Allow & don't ask again" remembers the exact command for this project.
+            if (decision === 'always' && bashCmd) allowCommand(project, bashCmd)
           }
         }
 
