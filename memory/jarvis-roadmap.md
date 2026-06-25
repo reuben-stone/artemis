@@ -17,10 +17,22 @@ FULLY DONE:
 - Connections & onboarding UI + GA connector (built 2026-06-24): ⚙ panel for Anthropic key, GitHub live-status, Google Analytics service-account JSON (safeStorage); GA4 last-7-days injected into ecosystem_status / morning reviews
 - Toolbar redesign: lucide-react icons, lean bar, tabbed Settings modal, drag + brand spacing
 
-CURRENT SPRINT — NEXT ITEMS (in order):
-1. Sidecar brain (cornerstone L2) — persistent daemon, Electron becomes reconnectable face; ends session-killing on main edits and unblocks proactivity + safe self-mod. Now load-bearing: background workers + live monitoring must outlive the Electron window.
-2. Reach (Phase 5) — fuller GA4 (top pages, trends) + GitHub connectors; clone-from-GitHub in Connections panel
-3. Worker agents + proactive digests (Phase 6) — fix-it sub-agents across repos; morning briefings
+CURRENT FOCUS (as of 2026-06-25): agentic tooling + HUD UI / Artemis capabilities.
+Sidecar brain is ON HOLD until Reuben has a new external drive for it to live on.
+
+DONE while sidecar parked:
+- HUD left rail + day planner (built 2026-06-25): collapsible Artemis-managed rail in the orb pane. A lightweight TICKET system (status todo/doing/done, priority, project link, tags, day) + local calendar, both local-first SQLite (todos/events tables), CRUD'd by Artemis via tools AND by the user in the rail (one source of truth, refetch each turn). Tools: tasks_view/task_add/task_update/task_remove/task_carry_over, calendar_view/event_add/event_update/event_remove, plan_my_day. Carry-over rolls unfinished tickets forward day to day. Both tables carry source+external_id so future import (Lumi scanner / GitHub issues) + Google Calendar sync need no schema change (all source='local' today). 5 store tests added. Calendar chosen LOCAL (not Google OAuth) for now.
+
+NEXT ITEMS while sidecar is parked:
+- Migrate ops cards (PR queue, briefing, ecosystem status) into the rail (currently docked over orb)
+- Agent-driven UI (panel actions) — let Artemis open/focus a specific rail card on command
+- Ticket-import + Google Calendar connectors (in/after Phase 5 reach)
+- Agentic tooling — keep expanding/sharpening Artemis's own tools (ops, senses, worker dispatch)
+- Reach (Phase 5) — fuller GA4 (top pages, trends) + GitHub connectors; clone-from-GitHub in Connections panel
+- Worker agents + proactive digests (Phase 6) — fix-it sub-agents across repos; morning briefings
+
+PARKED:
+- Sidecar brain (cornerstone L2) — persistent daemon; blocked on external drive (host disk for the daemon)
 
 DEFERRED BELOW THE OPS SPINE:
 - Wake word + VAD (Phase 1)
