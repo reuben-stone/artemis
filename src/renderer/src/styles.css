@@ -706,6 +706,12 @@ html, body, #root {
 .hud-card-titlebtn > svg:first-child { color: var(--muted); flex: none; }
 .hud-card-titlebtn:hover .hud-card-title { color: var(--accent-bright); }
 .hud-card.is-collapsed .hud-card-head { border-bottom: none; }
+/* drag-to-reorder */
+.hud-card-grip { display: inline-flex; align-items: center; color: var(--muted); cursor: grab; flex: none; opacity: 0.45; }
+.hud-card-grip:hover { opacity: 1; color: var(--accent-bright); }
+.hud-card-grip:active { cursor: grabbing; }
+.hud-card.dragging { opacity: 0.45; }
+.hud-card.drag-over { box-shadow: inset 0 3px 0 var(--accent-bright); }
 /* card show/hide menu */
 .hud-rail-head-actions button.on { color: var(--accent-bright); background: rgba(var(--accent-rgb), 0.12); }
 .hud-cardmenu {
