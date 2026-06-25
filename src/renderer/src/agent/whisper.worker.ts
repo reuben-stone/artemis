@@ -13,38 +13,24 @@ env.allowLocalModels = false
 // Single-threaded avoids needing COOP/COEP headers for SharedArrayBuffer.
 if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.numThreads = 1
 
+// fp32: genuinely unquantized — no MatMulNBits, fully supported by onnxruntime-web. (q8
+// was tried and FAILED to build on this runtime — 2026-06-25 — so we stay on fp32. A real
+// speedup needs multi-threaded WASM / WebGPU, tracked in ROADMAP Phase 1.)
 const MODEL = 'Xenova/whisper-tiny.en'
 
-// Prefer q8 (≈4× smaller + faster on WASM); fall back to fp32 if its decoder won't build.
-// Historically this model's q8 decoder shipped broken 4-bit (MatMulNBits) ops that
-// onnxruntime-web couldn't construct a session from — but newer runtimes may handle it,
-// so we try it and validate with a tiny silent inference (the session is built lazily at
-// first inference, so this surfaces a q8 failure HERE, not on the user's first words).
 let asr: Promise<AutomaticSpeechRecognitionPipeline> | null = null
-
-async function build(): Promise<AutomaticSpeechRecognitionPipeline> {
-  for (const dtype of ['q8', 'fp32'] as const) {
-    try {
-      const pipe = (await pipeline('automatic-speech-recognition', MODEL, {
-        dtype
-      })) as AutomaticSpeechRecognitionPipeline
-      await pipe(new Float32Array(16000)) // 1s of silence @16k — forces the session to build
-      return pipe
-    } catch {
-      // try the next dtype (q8 unsupported on this runtime → fp32)
-    }
-  }
-  throw new Error('no usable Whisper dtype (q8 and fp32 both failed to build)')
-}
-
-const getAsr = (): Promise<AutomaticSpeechRecognitionPipeline> => (asr ??= build())
+const getAsr = (): Promise<AutomaticSpeechRecognitionPipeline> =>
+  (asr ??= pipeline('automatic-speech-recognition', MODEL, {
+    dtype: 'fp32'
+  }) as Promise<AutomaticSpeechRecognitionPipeline>)
 
 self.onmessage = async (e: MessageEvent<{ id: number; samples?: Float32Array; warm?: boolean }>) => {
   const { id, samples, warm } = e.data
   try {
+    // A warm-up call downloads + constructs the model (the bulk of first-use cost) so the
+    // first real transcription is faster — without running a (fragile) dummy inference.
     const pipe = await getAsr()
     if (warm || !samples) {
-      // A warm-up call: the model is now loaded so the first real transcription is fast.
       self.postMessage({ id, text: '' })
       return
     }
