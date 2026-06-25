@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   ListTodo,
   CalendarDays,
+  CalendarRange,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -27,10 +28,12 @@ const PRIORITY_RANK: Record<string, number> = { high: 0, med: 1, low: 2 }
 
 export function HudRail({
   refreshSignal,
-  onAsk
+  onAsk,
+  onOpenCalendar
 }: {
   refreshSignal: number
   onAsk: (prompt: string) => void
+  onOpenCalendar: () => void
 }): JSX.Element {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('artemis.hud.collapsed') === '1')
   const [todos, setTodos] = useState<Todo[]>([])
@@ -193,6 +196,9 @@ export function HudRail({
             <span className="hud-card-title">
               <CalendarDays size={13} /> Today
             </span>
+            <button className="hud-mini" onClick={onOpenCalendar} title="Open full calendar">
+              <CalendarRange size={13} />
+            </button>
           </div>
           <div className="hud-list">
             {events.length === 0 && <div className="hud-empty">No events. Ask Artemis to schedule one.</div>}
