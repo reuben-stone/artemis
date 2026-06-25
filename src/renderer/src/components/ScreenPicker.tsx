@@ -19,20 +19,20 @@ export function ScreenPicker({
   onCapture: (dataUrl: string) => void
   onClose: () => void
 }): JSX.Element {
-  const [status, setStatus] = useState<string | null>(null)
-  const [sources, setSources] = useState<Source[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [sources, setSources] = useState<Source[]>([])
   const [capturing, setCapturing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const s = (await window.artemis?.screen?.status()) ?? 'granted'
+      // Always call getSources — that call is what registers Artemis in macOS's Screen
+      // Recording list and fires the permission prompt. Gating on status first means the
+      // app never registers and never appears in System Settings.
+      const list = (await window.artemis?.screen?.sources()) ?? []
       if (cancelled) return
-      setStatus(s)
-      if (s === 'granted') {
-        const list = (await window.artemis?.screen?.sources()) ?? []
-        if (!cancelled) setSources(list)
-      }
+      setSources(list)
+      setLoading(false)
     })()
     return () => {
       cancelled = true
@@ -52,7 +52,9 @@ export function ScreenPicker({
     }
   }
 
-  const granted = status === 'granted'
+  // Non-empty sources with real (non-black) thumbnails ⇒ permission is effectively
+  // working. Empty ⇒ not granted yet (the getSources call above just registered the app).
+  const hasSources = sources.length > 0
 
   return (
     <div className="projects-overlay" onClick={onClose}>
@@ -67,18 +69,19 @@ export function ScreenPicker({
         </div>
 
         <div className="screen-picker-body">
-          {status === null && (
+          {loading && (
             <div className="screen-msg">
-              <Loader2 size={16} className="spin" /> Checking permission…
+              <Loader2 size={16} className="spin" /> Loading screens…
             </div>
           )}
 
-          {status !== null && !granted && (
+          {!loading && !hasSources && (
             <div className="screen-msg">
               <p>
-                Artemis needs <strong>Screen Recording</strong> permission to see your screen.
-                Enable it for Artemis in System Settings → Privacy &amp; Security → Screen
-                Recording, then <strong>restart Artemis</strong>.
+                No screens available yet — Artemis needs <strong>Screen Recording</strong>{' '}
+                permission. It should now appear in System Settings → Privacy &amp; Security →
+                Screen Recording (in development it's listed as <strong>“Electron”</strong>, not
+                “Artemis”). Enable it, then <strong>restart Artemis</strong> and try again.
               </p>
               <button className="projects-add" onClick={() => window.artemis?.screen?.openPrivacy()}>
                 Open System Settings
@@ -86,17 +89,7 @@ export function ScreenPicker({
             </div>
           )}
 
-          {granted && sources === null && (
-            <div className="screen-msg">
-              <Loader2 size={16} className="spin" /> Loading windows…
-            </div>
-          )}
-
-          {granted && sources !== null && sources.length === 0 && (
-            <div className="screen-msg">No capturable screens or windows found.</div>
-          )}
-
-          {granted && sources && sources.length > 0 && (
+          {!loading && hasSources && (
             <div className={`screen-grid ${capturing ? 'busy' : ''}`}>
               {sources.map((s) => (
                 <button key={s.id} className="screen-source" onClick={() => pick(s.id)} title={s.name}>
