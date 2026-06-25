@@ -45,6 +45,57 @@ These map to **Multi-project foundation → sidecar brain → reach (GA + GitHub
 
 ---
 
+## The north star — the ticket operator loop
+
+The single feature that turns Artemis from "a clever assistant" into a **true repo
+operator**: one operator holding a **cross-repo feed of project tickets**, dispatching
+agents at them, and producing PRs that are all linked back through GitHub's own graph.
+This is the *mechanism* of the Livana ops-layer use case — it ties together pillars 1 and 3
+(multi-project oversight + worker agents) into a single loop.
+
+**The loop:**
+
+1. **Ingest** — pull tickets from **GitHub Projects (v2) / Issues** across the ecosystem
+   repos. A ticket is its own entity (number, title, repo, project, **assignee**, **status
+   column**, labels, linked PRs) — *not* a personal todo.
+2. **Overview** — a cross-repo board in the HUD: what's open, **what's assigned to what**,
+   in what status. The "state of the work" the way `ecosystem_status` is the state of the code.
+3. **Dispatch** — send a worker agent at a chosen ticket. It branches `artemis/ticket-<n>`,
+   does the work, runs that repo's checks, and **opens a PR — never pushes** (the existing
+   `dispatch_worker` posture).
+4. **Link** — the PR references the ticket (`Closes #<n>` + branch convention), so **GitHub
+   itself** wires ticket ↔ PR ↔ repo ↔ project together. Artemis rides that graph; it does not
+   rebuild it.
+5. **Approve** — the PR lands in the **PR Review Queue**; the human reviews and merges; GitHub
+   moves the ticket to Done. Loop closes.
+
+**Design commitments (learned-the-hard-way constraints, not decoration):**
+- **GitHub is the source of truth.** Artemis caches **read-mostly** and writes back only
+  narrow, explicit mutations (open PR, move status, comment/link). No two-way mirror — drift
+  is the death of these systems.
+- **Riding GitHub's native linking is the whole trick.** `Closes #n` + branch naming makes the
+  ticket/PR/repo/project graph assemble itself. Don't reimplement it.
+- **Dispatch stays human-gated.** A ticket appearing must *not* auto-run an agent. The feed
+  makes *selection* effortless; *firing a worker* stays a gated decision until trust is earned.
+- **Projects v2 is GraphQL-only** — richer (status columns, custom fields, cross-repo boards)
+  but a real connector cost. The board view is the value, so it's likely worth it; budget it,
+  don't assume it's a quick REST call.
+- **"Assigned to Artemis"** needs a concrete signal (a label or a Project field) so the agent
+  knows its queue versus the humans'.
+
+**Two-tier task model (keep these separate):**
+- **Personal daily todos** — lightweight, local-first, ephemeral, the user's own day. *Built*
+  (Phase 7 day planner: the `todos`/`events` tables + HUD rail). Personal layer only.
+- **Project tickets** — authoritative, GitHub-synced, a distinct richer entity and its own
+  data model + board. *The subsystem described here.* These never collapse into the daily list,
+  though Artemis can promote a ticket into "today's focus" on the personal list when working it.
+
+**Sequencing:** depends on the Phase 5 GitHub connector; builds on the Phase 6 worker-agent +
+PR-queue machinery; surfaces in the Phase 7 HUD as the cross-repo board. A multi-week subsystem,
+not a quick add-on — named here as the thing the spine is *for*.
+
+---
+
 ## Where we are today (June 2026)
 
 | Capability | State | Lives in |
@@ -261,6 +312,12 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 *Act beyond the repo.*
 
 - **MCP integration** — calendar, email, GitHub, Slack, notes, smart home — gated by permission flow
+- **GitHub ticket connector (the ingest half of the ticket operator)** — read tickets from
+  **GitHub Projects v2 / Issues** across the ecosystem repos (number, repo, project, assignee,
+  status column, labels, linked PRs). Projects v2 is **GraphQL-only**; this is the connector
+  that feeds the cross-repo board and the dispatch loop (see "The north star"). Read-mostly;
+  GitHub stays the source of truth. Also covers **Google Calendar** read/write so the Phase 7
+  local calendar can sync (today it's `source='local'`).
 - **Product data connectors (read-only)** — pull from the Livana product databases (the Lumi/LumiLens **MongoDB Atlas**: reviews, subscribers, scan/usage records) for summaries and overviews. Start **read-only** behind a per-project connection config; any write capability is a separate, explicitly-gated decision. Pairs with the GA4 analytics intake to give Reuben a real "state of the products" briefing.
 - **Trust boundary for untrusted content** — the moment Artemis can *read* email/web AND *act* (send, book, run), prompt injection becomes a real attack surface ("ignore previous instructions and …" hidden in an email/page). The current `DANGEROUS` regex blocklist won't catch this. Required: treat all fetched/received content as untrusted data (never instructions), and require explicit confirmation for any *outward-effecting* action (send/post/pay/delete), separate from the existing command gate.
 - ✅ **Connections & onboarding UI + GA connector (BUILT 2026-06-24)** — titlebar ⚙ panel:
@@ -288,7 +345,8 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 - **Scheduling / cron** — run tasks on timer or trigger ("every morning, brief me")
 - **Background / worker agents** — long-running fix-it sub-agents across repos. Each runs the
   target repo's own checks (where they exist), then **opens a PR — never pushes**. Multiple
-  can run in tandem.
+  can run in tandem. **This is the dispatch+PR half of the ticket operator loop** (see "The
+  north star"); the missing half is the cross-repo ticket *feed* that selects what to dispatch.
 - **PR Review Queue (UI card)** — every PR a worker agent opens is logged to a persistent card
   (repo · title · agent · timestamp · link-out · reviewed checkbox), stored in SQLite so it
   survives restart. Reuben comes back in the morning, clicks through each PR, and checks it off.
@@ -302,21 +360,31 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 *A presence, not a window.*
 
 - **Ambient mode** — small always-on-top orb that listens and glances, expands on interaction
-- **Left-rail HUD sidebar (Artemis-managed widgets)** — a collapsible rail in the orb window
-  (the orb pane is mostly empty) hosting *data-backed, agent-managed* cards, not decoration:
-  - **Ops first (the mission anchor):** the existing PR Review Queue, briefing, and a live
-    ecosystem/status widget become the first rail cards — the ops HUD.
-  - **Then personal productivity:** a **tasks/todo list** (local-first SQLite, Artemis CRUDs
-    it via tools like it does the project registry), **today's calendar** (real data via the
-    Phase 5 reach connector — Google Calendar), and a **"plan my day" card** Artemis
-    synthesizes from tasks + calendar + ecosystem state. This is what the "Plan my day"
-    starter chip implies — make it real, not aspirational.
-  - Framing: productivity widgets build *on* the ops HUD, not a detour from the multi-repo
-    mission.
+- ✅ **Left-rail HUD sidebar (Artemis-managed widgets) — BUILT 2026-06-25 (day planner)** — a
+  collapsible rail in the orb window (the orb pane is mostly empty) hosting *data-backed,
+  agent-managed* cards, not decoration. First cards shipped: the day planner.
+  - ✅ **Day planner (personal tasks + local calendar)** — the **lightweight personal layer**
+    (NOT the GitHub ticket operator — see "The north star" above; these stay separate). Richer
+    than a flat checklist: each task has `status` (todo/doing/done), priority, an optional
+    project tag, tags, and **carry-forward** of unfinished items day to day. Plus a **local
+    calendar** (timed + all-day events). All local-first SQLite (`todos` + `events`),
+    CRUD'd by Artemis via tools (`tasks_view`/`task_add`/`task_update`/`task_remove`/
+    `task_carry_over`, `calendar_view`/`event_add`/`event_update`/`event_remove`) **and** by the
+    user in the rail UI — one source of truth, refetched each turn. `plan_my_day` gathers
+    tickets + carry-overs + events in one call so Artemis can synthesise the day (makes the
+    "Plan my day" starter chip real). Rail "Plan my day" button hands the day to Artemis.
+  - **Built to grow into sync, not replace it:** both tables carry `source` + external ids, so
+    later we can **import tickets** (Lumi scanner, GitHub issues/Projects → `source='lumi'/'github'`,
+    de-duped on external id) and **sync the calendar** (Google Calendar → `source='google'`)
+    without a schema change — today everything is `source='local'`.
+  - ◻︎ **Ops cards next:** migrate the existing PR Review Queue, briefing, and a live
+    ecosystem/status widget into the rail as the ops HUD (currently still docked over the orb).
+  - ◻︎ **Google Calendar / ticket-import connectors** — the actual sync, in/after Phase 5 reach.
 - **Agent-driven UI (panel actions)** — tools that let Artemis *drive the interface*, not just
   emit text: open/focus a card ("show me the PR queue" opens the queue), highlight a project,
   surface a result visually. Closes the gap where Artemis can read the PR queue (`pr_queue`)
-  but can't *show* it.
+  but can't *show* it. (The rail already auto-refreshes when Artemis edits tickets/events; the
+  next step is letting it *open/focus* a specific card on command.)
 - **Glanceable widgets** — current task, calendar, notifications, system status around the orb
 - **Richer chat** — ✅ collapsible tool calls + diffs, ✅ command palette; inline media TODO
 - **Theming & settings** surface — ✅ accent theming; light theme TODO
