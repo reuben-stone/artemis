@@ -563,16 +563,129 @@ html, body, #root {
 /* Orb window gets more room (it hosts dismissable docked cards); chat is narrower. */
 .stage { flex: 1; display: grid; grid-template-columns: 1.7fr 1fr; min-height: 0; }
 
-/* left: orb fills the whole pane */
+/* left: the HUD rail + the orb stage share this pane (row) */
 .orb-pane {
   position: relative;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   border-right: 1px solid var(--border);
   min-height: 0;
   min-width: 0;
 }
-.orb-pane > div { flex: 1; min-height: 0; } /* the Canvas */
+.orb-stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.orb-stage > div { flex: 1; min-height: 0; } /* the Canvas (docks are absolute → unaffected) */
+
+/* ── HUD rail — Artemis-managed day-planner cockpit ──────────────────────── */
+.hud-rail {
+  flex: 0 0 264px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(22, 17, 40, 0.6), rgba(16, 12, 28, 0.6));
+}
+.hud-rail.collapsed {
+  flex-basis: 44px;
+  align-items: center;
+  gap: 14px;
+  padding-top: 12px;
+}
+.hud-rail-glyphs { display: flex; flex-direction: column; gap: 14px; color: var(--muted); margin-top: 6px; }
+.hud-expand {
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  padding: 6px; border-radius: 7px; display: inline-flex;
+}
+.hud-expand:hover { color: var(--accent-bright); background: rgba(var(--accent-rgb), 0.1); }
+
+.hud-rail-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 12px 9px; border-bottom: 1px solid var(--border);
+}
+.hud-rail-day { font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: 0.2px; }
+.hud-rail-head-actions { display: flex; gap: 1px; }
+.hud-rail-head-actions button {
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  padding: 5px; border-radius: 6px; display: inline-flex;
+}
+.hud-rail-head-actions button:hover { color: var(--accent-bright); background: rgba(var(--accent-rgb), 0.1); }
+
+.hud-rail-body { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+.hud-rail-body::-webkit-scrollbar { width: 7px; }
+.hud-rail-body::-webkit-scrollbar-thumb { background: rgba(var(--accent-rgb), 0.2); border-radius: 8px; }
+
+.hud-card {
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+}
+.hud-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.hud-card-title { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--text); text-transform: uppercase; letter-spacing: 0.4px; }
+.hud-card-title svg { color: var(--accent); }
+.hud-mini { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 3px; border-radius: 5px; display: inline-flex; }
+.hud-mini:hover { color: var(--accent-bright); background: rgba(var(--accent-rgb), 0.1); }
+
+.hud-list { display: flex; flex-direction: column; max-height: 38vh; overflow-y: auto; }
+.hud-list::-webkit-scrollbar { width: 7px; }
+.hud-list::-webkit-scrollbar-thumb { background: rgba(var(--accent-rgb), 0.18); border-radius: 8px; }
+.hud-empty { color: var(--muted); font-size: 12px; padding: 12px 11px; line-height: 1.4; }
+
+.hud-todo {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 7px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 12.5px; color: var(--text);
+}
+.hud-todo:last-child { border-bottom: none; }
+.hud-todo input[type='checkbox'] { accent-color: var(--accent); cursor: pointer; margin-top: 2px; flex: none; }
+.hud-todo.done .hud-todo-text { color: var(--muted); text-decoration: line-through; }
+.hud-todo.doing { background: rgba(var(--accent-rgb), 0.06); }
+.hud-todo-text { flex: 1; line-height: 1.35; word-break: break-word; }
+.hud-prio { width: 6px; height: 6px; border-radius: 50%; margin-top: 6px; flex: none; }
+.hud-prio.p-high { background: #ff5d6c; }
+.hud-prio.p-med { background: #f0b429; }
+.hud-prio.p-low { background: var(--muted); }
+.hud-chip {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px;
+  font-size: 10.5px; line-height: 16px; color: var(--accent-bright);
+  background: rgba(var(--accent-rgb), 0.12); vertical-align: 1px;
+}
+.hud-chip.src { color: #7fd1b9; background: rgba(127, 209, 185, 0.12); text-transform: uppercase; }
+.hud-chip.carry { color: var(--muted); background: rgba(255, 255, 255, 0.06); }
+.hud-todo-del {
+  background: transparent; border: none; color: transparent; cursor: pointer;
+  padding: 2px; border-radius: 5px; display: inline-flex; flex: none;
+}
+.hud-todo:hover .hud-todo-del { color: var(--muted); }
+.hud-todo-del:hover { color: #ff5d6c !important; background: rgba(255, 93, 108, 0.1); }
+
+.hud-add { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border); }
+.hud-add input {
+  flex: 1; min-width: 0; background: rgba(0, 0, 0, 0.25); color: var(--text);
+  border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font-size: 12.5px; outline: none;
+}
+.hud-add input:focus { border-color: rgba(var(--accent-rgb), 0.45); }
+.hud-add button {
+  background: rgba(var(--accent-rgb), 0.14); color: var(--accent-bright);
+  border: 1px solid rgba(var(--accent-rgb), 0.3); border-radius: 7px; cursor: pointer;
+  padding: 0 9px; display: inline-flex; align-items: center;
+}
+.hud-add button:hover { background: rgba(var(--accent-rgb), 0.22); }
+.hud-add button:disabled { opacity: 0.4; cursor: default; }
+
+.hud-event { display: flex; gap: 9px; padding: 7px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); font-size: 12.5px; }
+.hud-event:last-child { border-bottom: none; }
+.hud-event-when { color: var(--accent-bright); font-variant-numeric: tabular-nums; flex: none; min-width: 48px; }
+.hud-event-title { color: var(--text); line-height: 1.35; word-break: break-word; }
 
 /* Dock — a layer in the orb window for dismissable ambient cards (briefing, …). */
 .orb-dock {

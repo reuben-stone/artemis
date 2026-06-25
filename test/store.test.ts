@@ -23,7 +23,18 @@ import {
   addPrReview,
   listPrReviews,
   setPrReviewed,
-  clearReviewedPrs
+  clearReviewedPrs,
+  addTodo,
+  listTodos,
+  updateTodo,
+  removeTodo,
+  carryOverTodos,
+  unfinishedBefore,
+  addEvent,
+  listEvents,
+  listEventsRange,
+  updateEvent,
+  removeEvent
 } from '../src/main/store'
 
 /**
@@ -128,5 +139,78 @@ describe('PR review queue', () => {
 
     clearReviewedPrs()
     expect(listPrReviews().map((p) => p.title)).toEqual(['Fix a'])
+  })
+})
+
+describe('todos (ticket system)', () => {
+  it('adds, orders open-by-priority then done-last, and de-dups imported tickets', () => {
+    addTodo({ day: '2026-06-25', text: 'low thing', priority: 'low' })
+    addTodo({ day: '2026-06-25', text: 'urgent thing', priority: 'high' })
+    const done = addTodo({ day: '2026-06-25', text: 'already done' })
+    updateTodo(done.id, { status: 'done' })
+
+    const list = listTodos('2026-06-25')
+    expect(list.map((t) => t.text)).toEqual(['urgent thing', 'low thing', 'already done'])
+    expect(list[2].status).toBe('done')
+
+    // Imports de-dup on (source, external_id) — re-importing is a no-op.
+    const a = addTodo({ day: '2026-06-25', text: 'LUM-1 scan bug', source: 'lumi', externalId: 'LUM-1' })
+    const b = addTodo({ day: '2026-06-25', text: 'LUM-1 scan bug', source: 'lumi', externalId: 'LUM-1' })
+    expect(a.id).toBe(b.id)
+    expect(listTodos('2026-06-25').filter((t) => t.source === 'lumi').length).toBe(1)
+  })
+
+  it('updates and removes by id', () => {
+    const t = addTodo({ day: '2026-06-25', text: 'edit me' })
+    updateTodo(t.id, { text: 'edited', priority: 'med', project: 'Lumi' })
+    const after = listTodos('2026-06-25')[0]
+    expect(after.text).toBe('edited')
+    expect(after.project).toBe('Lumi')
+
+    removeTodo(t.id)
+    expect(listTodos('2026-06-25')).toEqual([])
+  })
+
+  it('carries unfinished tickets forward and records the original day once', () => {
+    addTodo({ day: '2026-06-23', text: 'slipped task' })
+    const finished = addTodo({ day: '2026-06-23', text: 'finished task' })
+    updateTodo(finished.id, { status: 'done' })
+
+    expect(unfinishedBefore('2026-06-25').map((t) => t.text)).toEqual(['slipped task'])
+
+    const moved = carryOverTodos('2026-06-25')
+    expect(moved).toBe(1) // only the unfinished one moves
+    const today = listTodos('2026-06-25')
+    expect(today.map((t) => t.text)).toEqual(['slipped task'])
+    expect(today[0].carriedFrom).toBe('2026-06-23')
+
+    // A second carry keeps the ORIGINAL day, not an intermediate one.
+    carryOverTodos('2026-06-26')
+    expect(listTodos('2026-06-26')[0].carriedFrom).toBe('2026-06-23')
+  })
+})
+
+describe('local calendar', () => {
+  it('lists a day ordered by start (all-day last) and queries a range', () => {
+    addEvent({ day: '2026-06-25', title: 'standup', starts: '09:30', ends: '09:45' })
+    addEvent({ day: '2026-06-25', title: 'all-day offsite' })
+    addEvent({ day: '2026-06-25', title: 'lunch', starts: '12:00' })
+    addEvent({ day: '2026-06-27', title: 'review', starts: '15:00' })
+
+    expect(listEvents('2026-06-25').map((e) => e.title)).toEqual(['standup', 'lunch', 'all-day offsite'])
+
+    const week = listEventsRange('2026-06-25', '2026-06-30')
+    expect(week.map((e) => e.title)).toEqual(['standup', 'lunch', 'all-day offsite', 'review'])
+  })
+
+  it('updates and removes events by id', () => {
+    const e = addEvent({ day: '2026-06-25', title: 'call', starts: '14:00' })
+    updateEvent(e.id, { starts: '15:00', notes: 'moved' })
+    const after = listEvents('2026-06-25')[0]
+    expect(after.starts).toBe('15:00')
+    expect(after.notes).toBe('moved')
+
+    removeEvent(e.id)
+    expect(listEvents('2026-06-25')).toEqual([])
   })
 })
