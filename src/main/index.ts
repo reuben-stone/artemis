@@ -6,7 +6,8 @@ import {
   session,
   systemPreferences,
   dialog,
-  desktopCapturer
+  desktopCapturer,
+  screen
 } from 'electron'
 import { join, basename } from 'path'
 import os from 'os'
@@ -279,15 +280,38 @@ ipcMain.handle('screen:sources', async () => {
   })
   return sources.map((s) => ({ id: s.id, name: s.name, thumbnail: s.thumbnail.toDataURL() }))
 })
-// Full-res still of the chosen source, returned as a PNG data URL.
+// Full-res still of the chosen source, returned as a PNG data URL. Returns a structured
+// { error } instead of a bare null on failure, so the picker can say *why* rather than
+// silently doing nothing.
 ipcMain.handle('screen:capture', async (_e, sourceId: string) => {
-  const sources = await desktopCapturer.getSources({
-    types: ['screen', 'window'],
-    thumbnailSize: { width: 1920, height: 1200 }
-  })
-  const src = sources.find((s) => s.id === sourceId)
-  if (!src || src.thumbnail.isEmpty()) return null
-  return { dataUrl: src.thumbnail.toDataURL(), mediaType: 'image/png', name: `${src.name}.png` }
+  try {
+    // Only enumerate the kind we actually picked (faster, and avoids grabbing every
+    // window at full res when the user chose a screen).
+    const types: ('screen' | 'window')[] = sourceId.startsWith('window:') ? ['window'] : ['screen']
+    // Size the grab to the largest display's real pixel resolution. A fixed box that's
+    // smaller than the screen downscales; one that mismatches the aspect/scale can come
+    // back as an empty (black) NativeImage on Retina/scaled Macs — the silent-null bug.
+    const px = screen.getAllDisplays().reduce(
+      (max, d) => {
+        const w = Math.round(d.size.width * d.scaleFactor)
+        const h = Math.round(d.size.height * d.scaleFactor)
+        return w * h > max.width * max.height ? { width: w, height: h } : max
+      },
+      { width: 1920, height: 1200 }
+    )
+    const sources = await desktopCapturer.getSources({ types, thumbnailSize: px })
+    const src = sources.find((s) => s.id === sourceId) ?? sources[0]
+    if (!src) return { error: 'That screen is no longer available — reopen the picker and try again.' }
+    if (src.thumbnail.isEmpty()) {
+      return {
+        error:
+          'Capture came back empty — Screen Recording permission may not be fully granted for this app. Toggle it in System Settings and relaunch.'
+      }
+    }
+    return { dataUrl: src.thumbnail.toDataURL(), mediaType: 'image/png', name: `${src.name}.png` }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Screen capture failed.' }
+  }
 })
 
 // After a renderer reload (e.g. a hot-reload of Artemis's own UI) the new page asks
