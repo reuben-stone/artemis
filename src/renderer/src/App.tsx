@@ -756,6 +756,8 @@ export default function App() {
             refreshSignal={hudRefresh}
             onAsk={(p) => void send(p)}
             onOpenCalendar={() => setShowCalendar(true)}
+            onOpenPrs={() => void openPrs()}
+            onOpenBriefing={openBriefing}
           />
           <div className="orb-stage">
             <Orb state={state} amplitudeRef={amplitudeRef} />
