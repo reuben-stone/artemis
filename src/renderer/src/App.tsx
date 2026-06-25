@@ -17,7 +17,7 @@ import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
 import { splitSpeech, speechFallback } from './agent/speech'
-import { transcribe } from './agent/transcribe'
+import { transcribe, warmTranscriber } from './agent/transcribe'
 
 // The transcript lives in the durable SQLite backbone (main process), so it survives
 // both a renderer hot-reload and a full restart — and isn't capped by localStorage's
@@ -606,6 +606,7 @@ export default function App() {
     else {
       cancel() // barge-in: stop any TTS so Artemis doesn't talk over you
       setMicHint(null)
+      warmTranscriber() // preload Whisper now so the first transcription isn't slow
       void speech.start()
     }
   }, [speech, cancel])

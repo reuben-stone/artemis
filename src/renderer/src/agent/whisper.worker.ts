@@ -13,22 +13,41 @@ env.allowLocalModels = false
 // Single-threaded avoids needing COOP/COEP headers for SharedArrayBuffer.
 if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.numThreads = 1
 
-// On WASM the default dtype is q8, and this model's q8 decoder ships broken 4-bit
-// (MatMulNBits) ops that onnxruntime-web can't build a session from — the session is
-// created lazily at first inference, so a load-time fallback never sees the failure.
-// Force genuinely unquantized fp32: no quantization, no MatMulNBits, fully supported.
 const MODEL = 'Xenova/whisper-tiny.en'
 
+// Prefer q8 (≈4× smaller + faster on WASM); fall back to fp32 if its decoder won't build.
+// Historically this model's q8 decoder shipped broken 4-bit (MatMulNBits) ops that
+// onnxruntime-web couldn't construct a session from — but newer runtimes may handle it,
+// so we try it and validate with a tiny silent inference (the session is built lazily at
+// first inference, so this surfaces a q8 failure HERE, not on the user's first words).
 let asr: Promise<AutomaticSpeechRecognitionPipeline> | null = null
-const getAsr = (): Promise<AutomaticSpeechRecognitionPipeline> =>
-  (asr ??= pipeline('automatic-speech-recognition', MODEL, {
-    dtype: 'fp32'
-  }) as Promise<AutomaticSpeechRecognitionPipeline>)
 
-self.onmessage = async (e: MessageEvent<{ id: number; samples: Float32Array }>) => {
-  const { id, samples } = e.data
+async function build(): Promise<AutomaticSpeechRecognitionPipeline> {
+  for (const dtype of ['q8', 'fp32'] as const) {
+    try {
+      const pipe = (await pipeline('automatic-speech-recognition', MODEL, {
+        dtype
+      })) as AutomaticSpeechRecognitionPipeline
+      await pipe(new Float32Array(16000)) // 1s of silence @16k — forces the session to build
+      return pipe
+    } catch {
+      // try the next dtype (q8 unsupported on this runtime → fp32)
+    }
+  }
+  throw new Error('no usable Whisper dtype (q8 and fp32 both failed to build)')
+}
+
+const getAsr = (): Promise<AutomaticSpeechRecognitionPipeline> => (asr ??= build())
+
+self.onmessage = async (e: MessageEvent<{ id: number; samples?: Float32Array; warm?: boolean }>) => {
+  const { id, samples, warm } = e.data
   try {
     const pipe = await getAsr()
+    if (warm || !samples) {
+      // A warm-up call: the model is now loaded so the first real transcription is fast.
+      self.postMessage({ id, text: '' })
+      return
+    }
     const out = await pipe(samples)
     const text = (Array.isArray(out) ? out[0]?.text : out?.text) ?? ''
     self.postMessage({ id, text })
