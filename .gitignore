@@ -23,3 +23,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Packaged app output (build/ is kept — it holds the app icon + resources)
+release/

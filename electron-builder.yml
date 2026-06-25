@@ -1,0 +1,25 @@
+appId: com.livana.artemis
+productName: Artemis
+directories:
+  buildResources: build
+  output: release
+# Negation-only patterns: everything (out/, node_modules/, package.json) is bundled
+# except the dev-only files listed here.
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!test/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml,package-lock.json}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+# Native modules must live outside the asar so they can be dlopen'd at runtime.
+asarUnpack:
+  - '**/*.node'
+mac:
+  category: public.app-category.developer-tools
+  # Drop a 1024x1024 build/icon.png (or build/icon.icns) for a custom Dock icon;
+  # without one, electron-builder uses the default Electron icon.
+  target:
+    - dir
+  artifactName: ${productName}.${ext}
