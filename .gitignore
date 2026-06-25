@@ -5,6 +5,7 @@ node_modules/
 out/
 dist/
 *.tsbuildinfo
+electron.vite.config.*.mjs
 
 # logs
 *.log
