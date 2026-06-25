@@ -377,14 +377,16 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
     later we can **import tickets** (Lumi scanner, GitHub issues/Projects → `source='lumi'/'github'`,
     de-duped on external id) and **sync the calendar** (Google Calendar → `source='google'`)
     without a schema change — today everything is `source='local'`.
-  - ◻︎ **Ops cards next:** migrate the existing PR Review Queue, briefing, and a live
-    ecosystem/status widget into the rail as the ops HUD (currently still docked over the orb).
+  - ✅ **Ops cards in the rail (BUILT 2026-06-25):** a live PR Review card (check-off inline)
+    and an Ecosystem health card (per-repo branch/dirty/PRs, lazy + session-cached) sit atop
+    the rail as the ops HUD; each expands to its existing full dock.
   - ◻︎ **Google Calendar / ticket-import connectors** — the actual sync, in/after Phase 5 reach.
-- **Agent-driven UI (panel actions)** — tools that let Artemis *drive the interface*, not just
-  emit text: open/focus a card ("show me the PR queue" opens the queue), highlight a project,
-  surface a result visually. Closes the gap where Artemis can read the PR queue (`pr_queue`)
-  but can't *show* it. (The rail already auto-refreshes when Artemis edits tickets/events; the
-  next step is letting it *open/focus* a specific card on command.)
+- ✅ **Agent-driven UI (panel actions) — BUILT 2026-06-25** — the `show_panel` tool lets Artemis
+  *drive the interface*, not just emit text: open/focus pr_queue · briefing · calendar · projects ·
+  settings · terminal ("show me the PR queue" opens it). Closes the gap where Artemis could read
+  the PR queue (`pr_queue`) but not *show* it. Plumbed via an optional emit context into the tool
+  loop → a `{ui:{panel}}` event the face maps to its open-handlers. Next: highlight/focus a
+  specific project or result, and let the agent expand/collapse the rail.
 - **Glanceable widgets** — current task, calendar, notifications, system status around the orb
 - **Richer chat** — ✅ collapsible tool calls + diffs, ✅ command palette; inline media TODO
 - **Theming & settings** surface — ✅ accent theming; light theme TODO
