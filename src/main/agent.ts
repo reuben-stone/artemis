@@ -22,6 +22,7 @@ import {
   getActiveProject,
   listProjects,
   getProjectGaProps,
+  listPrReviews,
   type StoredTurn
 } from './store'
 import { gaSummary, hasGaCredentials } from './ga'
@@ -47,7 +48,8 @@ export const AUTO_ALLOW = new Set([
   'recall_memory',
   'WebFetch',
   'ecosystem_status',
-  'system_context'
+  'system_context',
+  'pr_queue'
 ])
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
@@ -363,6 +365,16 @@ const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'pr_queue',
+    description:
+      "Read the PR Review Queue — pull requests that worker agents opened and that are awaiting the user's review/approval (project, title, branch, agent, reviewed status, link). Use for 'what PRs are waiting / what needs review / anything to approve'. Distinct from `ecosystem_status`, which lists live open PRs on GitHub across all repos. Read-only.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: []
+    }
+  },
+  {
     name: 'dispatch_worker',
     description:
       'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
@@ -641,6 +653,23 @@ async function checkOnline(): Promise<boolean> {
   }
 }
 
+/** Read the local PR Review Queue — worker-agent PRs awaiting the user's approval. */
+function toolPrQueue(): string {
+  const prs = listPrReviews()
+  if (!prs.length) {
+    return 'The PR Review Queue is empty — no agent-opened PRs are awaiting review. (For live open PRs on GitHub across all repos, use ecosystem_status.)'
+  }
+  const pending = prs.filter((p) => !p.reviewed).length
+  const rows = prs.map((p) => {
+    const head = `${p.reviewed ? '✓ reviewed' : '• awaiting review'} — [${p.project}] ${p.title}`
+    const meta = [p.branch ? `branch ${p.branch}` : '', p.agent ? `by ${p.agent}` : '']
+      .filter(Boolean)
+      .join(', ')
+    return `${head}${meta ? `\n    ${meta}` : ''}\n    ${p.url}`
+  })
+  return `PR Review Queue — ${prs.length} total, ${pending} awaiting review:\n\n${rows.join('\n\n')}`
+}
+
 /** A snapshot of the user's live desktop/OS context — a sense a terminal tool lacks. */
 async function toolSystemContext(): Promise<string> {
   const lines: string[] = []
@@ -787,6 +816,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       return toolEcosystemStatus()
     case 'system_context':
       return toolSystemContext()
+    case 'pr_queue':
+      return toolPrQueue()
     case 'dispatch_worker':
       return toolDispatchWorker(input as Parameters<typeof toolDispatchWorker>[0])
     default:

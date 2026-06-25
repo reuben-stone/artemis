@@ -26,13 +26,20 @@ export function ScreenPicker({
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      // Always call getSources — that call is what registers Artemis in macOS's Screen
-      // Recording list and fires the permission prompt. Gating on status first means the
-      // app never registers and never appears in System Settings.
-      const list = (await window.artemis?.screen?.sources()) ?? []
-      if (cancelled) return
-      setSources(list)
-      setLoading(false)
+      // Always call getSources — that call registers Artemis in macOS's Screen Recording
+      // list and fires the permission prompt. Race a timeout and catch errors so a stalled
+      // or rejected call can never leave the modal spinning forever (it falls to the help).
+      try {
+        const list = await Promise.race([
+          window.artemis?.screen?.sources() ?? Promise.resolve([]),
+          new Promise<Source[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+        ])
+        if (!cancelled) setSources(list ?? [])
+      } catch {
+        if (!cancelled) setSources([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     })()
     return () => {
       cancelled = true

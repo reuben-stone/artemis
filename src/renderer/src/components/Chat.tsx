@@ -122,7 +122,7 @@ function readAttachment(file: File): Promise<Attachment | null> {
 const QUICK_CHIPS: { label: string; prompt: string }[] = [
   { label: 'Ecosystem status', prompt: 'Give me a status overview across all my projects.' },
   { label: 'What needs attention?', prompt: 'Across my repos, what needs my attention right now?' },
-  { label: 'Open PRs', prompt: 'What pull requests are open and waiting for review?' },
+  { label: 'PRs to review', prompt: "What's in my PR review queue?" },
   { label: 'Plan my day', prompt: 'Based on the current state of my projects, what should I focus on today?' }
 ]
 
