@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { GitPullRequest, Boxes, RefreshCw, Maximize2, ExternalLink, GitBranch, GitCommitHorizontal } from 'lucide-react'
+import { RailCard } from './RailCard'
 import type { PrReview, BriefingData } from '../../../preload'
 
 /**
@@ -18,11 +19,17 @@ let ecoCache: BriefingData | null = null
 export function OpsRail({
   refreshSignal,
   onOpenPrs,
-  onOpenBriefing
+  onOpenBriefing,
+  collapsed,
+  hidden,
+  onToggleCollapse
 }: {
   refreshSignal: number
   onOpenPrs: () => void
   onOpenBriefing: () => void
+  collapsed: Record<string, boolean>
+  hidden: Record<string, boolean>
+  onToggleCollapse: (key: string) => void
 }): JSX.Element {
   const [prs, setPrs] = useState<PrReview[]>([])
   const [eco, setEco] = useState<BriefingData | null>(ecoCache)
@@ -61,15 +68,18 @@ export function OpsRail({
   return (
     <>
       {/* PR Review */}
-      <section className="hud-card">
-        <div className="hud-card-head">
-          <span className="hud-card-title">
-            <GitPullRequest size={13} /> PR Review{pending.length ? ` · ${pending.length}` : ''}
-          </span>
+      {!hidden.prs && (
+      <RailCard
+        icon={<GitPullRequest size={13} />}
+        title={`PR Review${pending.length ? ` · ${pending.length}` : ''}`}
+        collapsed={!!collapsed.prs}
+        onToggleCollapse={() => onToggleCollapse('prs')}
+        actions={
           <button className="hud-mini" onClick={onOpenPrs} title="Open the full PR queue">
             <Maximize2 size={12} />
           </button>
-        </div>
+        }
+      >
         <div className="hud-list">
           {prs.length === 0 && <div className="hud-empty">No PRs awaiting review — worker agents log theirs here.</div>}
           {pending.slice(0, 6).map((p) => (
@@ -86,23 +96,27 @@ export function OpsRail({
           ))}
           {pending.length > 6 && <div className="hud-empty">+{pending.length - 6} more — open the full queue</div>}
         </div>
-      </section>
+      </RailCard>
+      )}
 
       {/* Ecosystem health */}
-      <section className="hud-card">
-        <div className="hud-card-head">
-          <span className="hud-card-title">
-            <Boxes size={13} /> Ecosystem
-          </span>
-          <div className="hud-card-head-actions">
+      {!hidden.ecosystem && (
+      <RailCard
+        icon={<Boxes size={13} />}
+        title="Ecosystem"
+        collapsed={!!collapsed.ecosystem}
+        onToggleCollapse={() => onToggleCollapse('ecosystem')}
+        actions={
+          <>
             <button className="hud-mini" onClick={() => void loadEco()} title="Refresh" disabled={ecoLoading}>
               <RefreshCw size={12} className={ecoLoading ? 'spin' : ''} />
             </button>
             <button className="hud-mini" onClick={onOpenBriefing} title="Open the full briefing">
               <Maximize2 size={12} />
             </button>
-          </div>
-        </div>
+          </>
+        }
+      >
         <div className="hud-list">
           {!eco && ecoLoading && <div className="hud-empty">Gathering ecosystem status…</div>}
           {!eco && !ecoLoading && <div className="hud-empty">No data yet — refresh to load.</div>}
@@ -150,7 +164,8 @@ export function OpsRail({
             </div>
           ))}
         </div>
-      </section>
+      </RailCard>
+      )}
     </>
   )
 }

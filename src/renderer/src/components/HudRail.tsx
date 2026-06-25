@@ -9,9 +9,11 @@ import {
   Trash2,
   CornerUpRight,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  SlidersHorizontal
 } from 'lucide-react'
 import { OpsRail } from './OpsRail'
+import { RailCard } from './RailCard'
 import type { Todo, CalendarEvent } from '../../../preload'
 
 /**
@@ -30,6 +32,22 @@ const PRIORITY_RANK: Record<string, number> = { high: 0, med: 1, low: 2 }
 const RAIL_MIN = 200
 const RAIL_MAX = 420
 const RAIL_DEFAULT = 244
+
+// The rail's cards, in order — used by the show/hide menu.
+const CARDS: Array<{ key: string; label: string }> = [
+  { key: 'prs', label: 'PR Review' },
+  { key: 'ecosystem', label: 'Ecosystem' },
+  { key: 'tickets', label: 'Tickets' },
+  { key: 'calendar', label: 'Calendar' }
+]
+
+function loadMap(key: string): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(key) || '{}')
+  } catch {
+    return {}
+  }
+}
 
 export function HudRail({
   refreshSignal,
@@ -53,10 +71,23 @@ export function HudRail({
   const [todos, setTodos] = useState<Todo[]>([])
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [draft, setDraft] = useState('')
+  // Per-card collapse (fold a section) + hide (remove via the settings menu). Persisted.
+  const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>(() => loadMap('artemis.hud.cards.collapsed'))
+  const [hiddenCards, setHiddenCards] = useState<Record<string, boolean>>(() => loadMap('artemis.hud.cards.hidden'))
+  const [showCardMenu, setShowCardMenu] = useState(false)
 
   useEffect(() => {
     localStorage.setItem('artemis.hud.width', String(width))
   }, [width])
+  useEffect(() => {
+    localStorage.setItem('artemis.hud.cards.collapsed', JSON.stringify(collapsedCards))
+  }, [collapsedCards])
+  useEffect(() => {
+    localStorage.setItem('artemis.hud.cards.hidden', JSON.stringify(hiddenCards))
+  }, [hiddenCards])
+
+  const toggleCollapse = useCallback((k: string) => setCollapsedCards((c) => ({ ...c, [k]: !c[k] })), [])
+  const toggleHidden = useCallback((k: string) => setHiddenCards((h) => ({ ...h, [k]: !h[k] })), [])
 
   // The agent can expand the rail (show_panel 'rail') via a window event from App.
   useEffect(() => {
@@ -171,6 +202,13 @@ export function HudRail({
             <RefreshCw size={14} />
           </button>
           <button
+            className={showCardMenu ? 'on' : ''}
+            onClick={() => setShowCardMenu((v) => !v)}
+            title="Choose which cards show"
+          >
+            <SlidersHorizontal size={14} />
+          </button>
+          <button
             onClick={() => {
               setCollapsed(true)
               localStorage.setItem('artemis.hud.collapsed', '1')
@@ -180,23 +218,43 @@ export function HudRail({
             <PanelLeftClose size={14} />
           </button>
         </div>
+        {showCardMenu && (
+          <div className="hud-cardmenu">
+            <div className="hud-cardmenu-title">Show cards</div>
+            {CARDS.map((c) => (
+              <label key={c.key} className="hud-cardmenu-row">
+                <input type="checkbox" checked={!hiddenCards[c.key]} onChange={() => toggleHidden(c.key)} />
+                {c.label}
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="hud-rail-body">
         {/* Ops first — the mission anchor */}
-        <OpsRail refreshSignal={refreshSignal} onOpenPrs={onOpenPrs} onOpenBriefing={onOpenBriefing} />
+        <OpsRail
+          refreshSignal={refreshSignal}
+          onOpenPrs={onOpenPrs}
+          onOpenBriefing={onOpenBriefing}
+          collapsed={collapsedCards}
+          hidden={hiddenCards}
+          onToggleCollapse={toggleCollapse}
+        />
 
         {/* Tasks / tickets */}
-        <section className="hud-card">
-          <div className="hud-card-head">
-            <span className="hud-card-title">
-              <ListTodo size={13} /> Tickets{open.length ? ` · ${open.length}` : ''}
-            </span>
+        {!hiddenCards.tickets && (
+        <RailCard
+          icon={<ListTodo size={13} />}
+          title={`Tickets${open.length ? ` · ${open.length}` : ''}`}
+          collapsed={!!collapsedCards.tickets}
+          onToggleCollapse={() => toggleCollapse('tickets')}
+          actions={
             <button className="hud-mini" onClick={carryOver} title="Carry unfinished tasks from earlier days into today">
               <CornerUpRight size={13} />
             </button>
-          </div>
-
+          }
+        >
           <div className="hud-list">
             {todos.length === 0 && <div className="hud-empty">Nothing yet — add a ticket below.</div>}
             {[...todos]
@@ -241,18 +299,22 @@ export function HudRail({
               <Plus size={14} />
             </button>
           </div>
-        </section>
+        </RailCard>
+        )}
 
         {/* Calendar */}
-        <section className="hud-card">
-          <div className="hud-card-head">
-            <span className="hud-card-title">
-              <CalendarDays size={13} /> Today
-            </span>
+        {!hiddenCards.calendar && (
+        <RailCard
+          icon={<CalendarDays size={13} />}
+          title="Today"
+          collapsed={!!collapsedCards.calendar}
+          onToggleCollapse={() => toggleCollapse('calendar')}
+          actions={
             <button className="hud-mini" onClick={onOpenCalendar} title="Open full calendar">
               <CalendarRange size={13} />
             </button>
-          </div>
+          }
+        >
           <div className="hud-list">
             {events.length === 0 && <div className="hud-empty">No events. Ask Artemis to schedule one.</div>}
             {events.map((e) => (
@@ -262,7 +324,8 @@ export function HudRail({
               </div>
             ))}
           </div>
-        </section>
+        </RailCard>
+        )}
       </div>
     </div>
   )
