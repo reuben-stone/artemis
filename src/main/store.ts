@@ -267,6 +267,22 @@ export function setModel(model: string): void {
   setMeta(MODEL_KEY, model)
 }
 
+// --- worker model (decoupled) ------------------------------------------------
+// Worker sub-agents do mechanical code edits in a loop (up to 30 rounds), so they're the
+// biggest credit sink. Keep their model SEPARATE from the chat model and default it CHEAP
+// (Sonnet), so a conversation on Opus doesn't make every dispatch cost 5x. Settable in
+// Settings → Model. (Haiku is an even cheaper option for trivial fixes.)
+const WORKER_MODEL_KEY = 'worker_model'
+const DEFAULT_WORKER_MODEL = 'claude-sonnet-4-6'
+
+export function getWorkerModel(): string {
+  return getMeta(WORKER_MODEL_KEY) ?? DEFAULT_WORKER_MODEL
+}
+
+export function setWorkerModel(model: string): void {
+  setMeta(WORKER_MODEL_KEY, model)
+}
+
 // --- model backend (which brain) ---------------------------------------------
 
 // 'anthropic' = metered Claude API (default), 'ollama' = local/home-box model,

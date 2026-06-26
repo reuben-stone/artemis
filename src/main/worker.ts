@@ -6,7 +6,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { glob } from 'glob'
 import { getModelClient } from './model'
-import { addPrReview } from './store'
+import { addPrReview, getWorkerModel } from './store'
 import { parseGitRemote } from './github'
 import { formatTicketBranch, formatClosesLine } from './board'
 import { DANGEROUS, clampToolOutput } from './safety'
@@ -255,7 +255,9 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
   try {
     // 2. the focused worker sub-agent. Full-repo ACCESS (monorepo workspaces share code — the
     //    fix may need shared packages / root config), but FOCUSED on the workspace.
-    const client = await getModelClient()
+    // Workers run on the CHEAP worker model (decoupled from the chat model) — they loop up to
+    // 30 rounds of mechanical edits, so they're the biggest credit sink; don't inherit Opus.
+    const client = await getModelClient({ model: getWorkerModel() })
     const system = [
       `You are an autonomous WORKER agent fixing one specific issue in the "${spec.projectName}" project.`,
       `Your working directory is the repository root: ${worktree}. Use absolute paths under it.`,

@@ -386,6 +386,9 @@ const api = {
     undoNewConversation: (): Promise<void> => ipcRenderer.invoke('agent:undoNewConversation'),
     getModel: (): Promise<string> => ipcRenderer.invoke('agent:getModel'),
     setModel: (model: string): Promise<void> => ipcRenderer.invoke('agent:setModel', model),
+    // The model worker sub-agents run on — decoupled + cheap by default (they're the big credit sink).
+    getWorkerModel: (): Promise<string> => ipcRenderer.invoke('agent:getWorkerModel'),
+    setWorkerModel: (model: string): Promise<void> => ipcRenderer.invoke('agent:setWorkerModel', model),
     // Which brain runs turns: 'anthropic' (metered API), 'ollama' (local/box), or
     // 'claude-cli' (flat subscription, not wired yet). Host/model are for ollama.
     getBackendConfig: (): Promise<{
