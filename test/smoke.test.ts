@@ -14,6 +14,7 @@ import {
 } from '../src/main/agent'
 import { toOllamaMessages } from '../src/main/model/ollama'
 import { parseGitRemote } from '../src/main/github'
+import { buildBoardQuery, mapBoardResponse, formatTicketBranch, formatClosesLine, mapPrOutcome } from '../src/main/board'
 
 /**
  * Artemis smoke harness — a fast, free, deterministic check that the core
@@ -62,6 +63,13 @@ describe('gate — danger blocklist & auto-allow set', () => {
     expect(AUTO_ALLOW.has('save_memory')).toBe(true)
     expect(AUTO_ALLOW.has('Bash')).toBe(false)
     expect(AUTO_ALLOW.has('Write')).toBe(false)
+  })
+  it('gates ticket writes but not the read-only board view', () => {
+    expect(AUTO_ALLOW.has('tickets_view')).toBe(true) // read-only board read
+    expect(AUTO_ALLOW.has('ticket_create')).toBe(false) // outward-effecting write → gated
+    expect(AUTO_ALLOW.has('ticket_comment')).toBe(false) // public comment → gated
+    expect(AUTO_ALLOW.has('ticket_update')).toBe(false) // status/close write → gated
+    expect(AUTO_ALLOW.has('dispatch_worker')).toBe(false) // still gated
   })
 })
 
@@ -211,6 +219,143 @@ describe('multi-project — GitHub remote parsing', () => {
     expect(parseGitRemote('git@gitlab.com:foo/bar.git')).toBeNull()
     expect(parseGitRemote('')).toBeNull()
     expect(parseGitRemote(null)).toBeNull()
+  })
+})
+
+describe('ticket operator — GitHub Projects board helpers', () => {
+  // A captured-shape response (organization root) with an Issue, a DraftIssue, and a
+  // second Issue from another repo — the cross-repo board.
+  const boardFixture = {
+    data: {
+      organization: {
+        projectV2: {
+          id: 'PVT_board1',
+          title: 'Livana Ops',
+          items: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                id: 'ITEM_1',
+                updatedAt: '2026-06-20T10:00:00Z',
+                fieldValueByName: { name: 'In Progress' },
+                content: {
+                  __typename: 'Issue',
+                  id: 'I_1',
+                  number: 42,
+                  title: 'Fix flaky scan test',
+                  url: 'https://github.com/livana/scanner/issues/42',
+                  repository: { nameWithOwner: 'livana/scanner' },
+                  assignees: { nodes: [{ login: 'reuben' }] },
+                  labels: { nodes: [{ name: 'bug' }, { name: 'p1' }] }
+                }
+              },
+              {
+                id: 'ITEM_2',
+                updatedAt: '2026-06-19T08:00:00Z',
+                fieldValueByName: null,
+                content: { __typename: 'DraftIssue', title: 'brainstorm onboarding' }
+              },
+              {
+                id: 'ITEM_3',
+                updatedAt: '2026-06-18T08:00:00Z',
+                fieldValueByName: { name: 'Todo' },
+                content: {
+                  __typename: 'Issue',
+                  id: 'I_3',
+                  number: 7,
+                  title: 'Add dark mode',
+                  url: 'https://github.com/livana/web/issues/7',
+                  repository: { nameWithOwner: 'livana/web' },
+                  assignees: { nodes: [] },
+                  labels: { nodes: [] }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+  it('builds the query against the right root field for org vs user projects', () => {
+    expect(buildBoardQuery('org')).toContain('organization(login:')
+    expect(buildBoardQuery('org')).not.toContain('user(login:')
+    expect(buildBoardQuery('user')).toContain('user(login:')
+    expect(buildBoardQuery('user')).not.toContain('organization(login:')
+    // status read name-addressably — no field-id lookup needed for reads
+    expect(buildBoardQuery('org')).toContain('fieldValueByName(name: "Status")')
+  })
+
+  it('maps a board response, flattening status/assignees/labels and skipping drafts', () => {
+    const { boardId, title, tickets, pageInfo } = mapBoardResponse(boardFixture)
+    expect(boardId).toBe('PVT_board1')
+    expect(title).toBe('Livana Ops')
+    expect(pageInfo.hasNextPage).toBe(false)
+    expect(tickets.length).toBe(2) // the DraftIssue is skipped (not dispatchable)
+
+    const a = tickets[0]
+    expect(a.repo).toBe('livana/scanner')
+    expect(a.itemId).toBe('ITEM_1')
+    expect(a.issueNumber).toBe(42)
+    expect(a.contentId).toBe('I_1')
+    expect(a.status).toBe('In Progress')
+    expect(a.assignees).toBe('reuben')
+    expect(a.labels).toBe('bug, p1')
+    expect(a.url).toBe('https://github.com/livana/scanner/issues/42')
+    expect(typeof a.updatedAt).toBe('number')
+
+    const b = tickets[1]
+    expect(b.repo).toBe('livana/web')
+    expect(b.status).toBe('Todo')
+    expect(b.assignees).toBeNull()
+    expect(b.labels).toBeNull()
+  })
+
+  it('reads a user-owned board response too', () => {
+    const userFixture = { data: { user: boardFixture.data.organization } }
+    const { boardId, tickets } = mapBoardResponse(userFixture)
+    expect(boardId).toBe('PVT_board1')
+    expect(tickets.length).toBe(2)
+  })
+
+  it('formats the ticket branch and Closes line that wire PR↔ticket on GitHub', () => {
+    expect(formatTicketBranch(42)).toBe('artemis/ticket-42')
+    expect(formatClosesLine(42)).toBe('Closes #42')
+  })
+
+  it('maps PR outcome — merge state, CI rollup, review decision (close the loop)', () => {
+    // merged, all checks passed, approved
+    expect(
+      mapPrOutcome({
+        state: 'MERGED',
+        reviewDecision: 'APPROVED',
+        statusCheckRollup: [
+          { status: 'COMPLETED', conclusion: 'SUCCESS' },
+          { state: 'SUCCESS' }
+        ]
+      })
+    ).toEqual({ state: 'merged', checks: 'success', reviewDecision: 'approved' })
+
+    // open, a failing check beats the rest, changes requested
+    expect(
+      mapPrOutcome({
+        state: 'OPEN',
+        reviewDecision: 'CHANGES_REQUESTED',
+        statusCheckRollup: [
+          { status: 'COMPLETED', conclusion: 'SUCCESS' },
+          { status: 'COMPLETED', conclusion: 'FAILURE' }
+        ]
+      })
+    ).toEqual({ state: 'open', checks: 'failure', reviewDecision: 'changes_requested' })
+
+    // a still-running check → pending; no review → none
+    expect(
+      mapPrOutcome({ state: 'OPEN', statusCheckRollup: [{ status: 'IN_PROGRESS' }] })
+    ).toEqual({ state: 'open', checks: 'pending', reviewDecision: 'none' })
+
+    // no checks at all → none; empty payload defaults sanely
+    expect(mapPrOutcome({ state: 'OPEN' }).checks).toBe('none')
+    expect(mapPrOutcome({})).toEqual({ state: 'open', checks: 'none', reviewDecision: 'none' })
   })
 })
 

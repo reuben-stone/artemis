@@ -24,6 +24,16 @@ import {
   listProjects,
   getProjectGaProps,
   listPrReviews,
+  setPrReviewed,
+  clearReviewedPrs,
+  listUnreadComments,
+  markCommentsRead,
+  setModel,
+  setBackend,
+  listAllTickets,
+  listTicketsByProject,
+  getProjectBoards,
+  type ProjectTicket,
   getPermissionMode,
   isCommandAllowed,
   allowCommand,
@@ -46,6 +56,7 @@ import {
 } from './store'
 import { gaSummary, hasGaCredentials } from './ga'
 import { parseGitRemote } from './github'
+import { syncBoardForProject, syncPrOutcomes, createTicket, formatTicketBranch, addTicketComment, updateTicket } from './board'
 
 const execAsync = promisify(exec)
 
@@ -69,11 +80,14 @@ export const AUTO_ALLOW = new Set([
   'ecosystem_status',
   'system_context',
   'pr_queue',
+  'tickets_view',
+  'notifications_view',
   'tasks_view',
   'calendar_view',
   'plan_my_day',
   'show_panel',
-  'switch_project'
+  'switch_project',
+  'app_control'
 ])
 
 // Artemis's OWN repo — identity docs, self-model, memory live here regardless of
@@ -391,11 +405,128 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'pr_queue',
     description:
-      "Read the PR Review Queue — pull requests that worker agents opened and that are awaiting the user's review/approval (project, title, branch, agent, reviewed status, link). Use for 'what PRs are waiting / what needs review / anything to approve'. Distinct from `ecosystem_status`, which lists live open PRs on GitHub across all repos. Read-only.",
+      "Read the PR Review Queue — pull requests that worker agents opened and that are awaiting the user's review/approval (project, title, branch, agent, reviewed status, link). Pass refresh:true to pull each pending PR's LIVE OUTCOME from GitHub — merge state, CI checks (pass/fail), and review decision — so you can see the fate of PRs you opened ('did my PRs land', 'what's the state of what I dispatched', 'anything failing CI'). Use for 'what PRs are waiting / what needs review / how did my fixes go'. Distinct from `ecosystem_status`, which lists live open PRs across all repos. Read-only.",
     input_schema: {
       type: 'object' as const,
-      properties: {},
+      properties: {
+        refresh: {
+          type: 'boolean',
+          description: 'Pull live merge/CI/review status from GitHub for each pending PR before reporting (a network call).'
+        }
+      },
       required: []
+    }
+  },
+  {
+    name: 'pr_review',
+    description:
+      "Act on the PR Review Queue: mark a PR reviewed (or not), or clear all reviewed rows. Identify the PR by its queue id — the #<id> shown by pr_queue. The queue is LOCAL (this is the human's approval flag, no GitHub effect). Gated WRITE. Use for 'mark PR 3 reviewed', 'clear the reviewed PRs'.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'number', description: 'The PR queue id (the #<id> from pr_queue).' },
+        reviewed: { type: 'boolean', description: 'Mark reviewed (true, default) or un-review (false).' },
+        clearReviewed: { type: 'boolean', description: 'Instead of one PR, drop ALL reviewed rows from the queue.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'notifications_view',
+    description:
+      "Read new (unread) comments across the watched GitHub Projects boards — the notifications feed (who commented, on which board/ticket, the text). Excludes your own comments. Use for 'any new comments', 'what did people say on the boards', 'catch me up'. Optional project filter. Reply with ticket_comment; clear with notifications_mark_read. Read-only.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Optional: only comments on this project\'s boards.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'notifications_mark_read',
+    description:
+      "Mark board comments as read — advances the 'seen' watermark so the current comments stop showing as new (in the notifications feed + the rail card). Optional project filter (else all boards). Gated WRITE (local only). Use for 'mark all read', 'clear my notifications'.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Optional: only mark this project\'s board comments read.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'app_control',
+    description:
+      "Drive app-level settings by voice/command: which MODEL runs turns ('use Opus', 'switch to Sonnet'), which BRAIN/BACKEND ('use the local model', 'go back to cloud'), and VOICE/TTS on or off ('stop talking', 'turn voice off', 'enable voice'). Model/backend changes apply to the NEXT turn (read fresh each turn). Does NOT change the permission posture — that gate stays a human-only, on-screen decision. (Read-only/benign — no permission prompt.)",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        model: { type: 'string', enum: ['opus', 'sonnet'], description: 'Switch the model: opus (max capability, pricier) or sonnet (fast default).' },
+        backend: { type: 'string', enum: ['anthropic', 'ollama'], description: 'Switch the brain: anthropic (metered cloud) or ollama (local).' },
+        voice: { type: 'string', enum: ['on', 'off'], description: 'Turn spoken replies (TTS) on or off. "off" also stops any current speech.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'tickets_view',
+    description:
+      "Read the GitHub Projects ticket boards — the ingest half of the ticket operator loop. Tickets are grouped BY BOARD (each registered project maps to one Projects v2 board, shown by its GitHub name e.g. Lumi/LumiLens), then by status column, and the output ends with a board-coverage summary (which projects have a board mapped, which don't). Each ticket shows #number, title, [repo], assignees, labels, and a worker-PR flag. IMPORTANT: a ticket's [repo] is where the issue LIVES on GitHub — it is NOT the board; one board can aggregate issues from several repos, so never infer board membership from the repo. Pass project to filter to one board, or refresh:true to re-sync from GitHub first (a network call). Use for 'what's on the boards / what should I work on'. To act on one, dispatch_worker with its ticketNumber. Read-only.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Optional: only this project (loose name match).' },
+        refresh: { type: 'boolean', description: 'Re-sync the board(s) from GitHub before reporting.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'ticket_create',
+    description:
+      'Create a GitHub issue, add it to the project\'s Projects v2 board, and optionally set its status column. This files a ticket on the board (the other end of the loop — e.g. "noticed a flaky test, file a ticket"). Outward-effecting WRITE on GitHub, so it is permission-gated like dispatch_worker. Requires the project to have a GitHub remote and a configured board.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'The project name (as registered, e.g. "livana-scanner").' },
+        board: { type: 'string', description: 'Which board to file it on, if the project has several (e.g. "Lumi"). Omit if it has one.' },
+        title: { type: 'string', description: 'The issue title.' },
+        body: { type: 'string', description: 'Optional issue body / description.' },
+        status: { type: 'string', description: 'Optional board status column to drop it into (e.g. "Todo").' }
+      },
+      required: ['project', 'title']
+    }
+  },
+  {
+    name: 'ticket_comment',
+    description:
+      "Post a comment (reply) on a board ticket — e.g. acknowledge a teammate's comment, note progress, or explain a decision. Outward-effecting WRITE on GitHub (the comment is public to the repo), so it is permission-gated. Identify the ticket by its project + issue number (from tickets_view). If the project has several boards and the same number exists on more than one, pass `board` to say which.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'The project the ticket is on (as in tickets_view).' },
+        number: { type: 'number', description: 'The issue number (e.g. 11).' },
+        body: { type: 'string', description: 'The comment text (markdown allowed).' },
+        board: { type: 'string', description: 'Which board the ticket is on (e.g. "Lumi"). Required only when the number is ambiguous across the project\'s boards.' }
+      },
+      required: ['project', 'number', 'body']
+    }
+  },
+  {
+    name: 'ticket_update',
+    description:
+      "Update a board ticket: move its Status column and/or close/reopen it — e.g. 'move #11 to In Progress', 'close #7'. Outward-effecting WRITE on GitHub, permission-gated. Identify the ticket by project + issue number (from tickets_view). status must match one of that board's columns. If the same number exists on more than one of the project's boards, pass `board` to say which.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'The project the ticket is on.' },
+        number: { type: 'number', description: 'The issue number.' },
+        status: { type: 'string', description: 'Optional: the Status column to move it to (must match a board column).' },
+        state: { type: 'string', enum: ['open', 'closed'], description: 'Optional: close or reopen the issue.' },
+        board: { type: 'string', description: 'Which board the ticket is on (e.g. "Lumi"). Required only when the number is ambiguous across the project\'s boards.' }
+      },
+      required: ['project', 'number']
     }
   },
   {
@@ -555,15 +686,18 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'show_panel',
     description:
-      "Drive your own interface: open or focus a panel so the user SEES it, not just reads a description of it. Use for 'show me the PR queue', 'open my calendar', 'pull up the briefing', 'open settings'. You can still summarise in words alongside opening it. (briefing = the ecosystem-status card.)",
+      "Drive your own interface: open or focus a panel so the user SEES it, not just reads a description of it. Use for 'show me the PR queue', 'open my calendar', 'pull up my tasks', 'open settings'. For the ticket board you can also pass `board` to filter to one board ('open the Lumi board' → panel:'board', board:'Lumi'), AND `ticket` (an issue number) to open straight into that ticket's detail view ('open ticket 5 on the Lumi board' → panel:'board', board:'Lumi', ticket:5). For panel='tasks' or 'calendar' you can pass `day` (YYYY-MM-DD) to open focused on that day ('show my tasks for tomorrow'). After you add/move/delete a task or event via the task_*/event_* tools, opening 'tasks'/'calendar' is a good way to let the user SEE the change. You can still summarise alongside opening it. (briefing = the ecosystem-status card.)",
     input_schema: {
       type: 'object' as const,
       properties: {
         panel: {
           type: 'string',
-          enum: ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal', 'rail'],
-          description: 'Which panel to open. "rail" expands the left HUD rail.'
-        }
+          enum: ['pr_queue', 'board', 'tasks', 'calendar', 'notifications', 'briefing', 'projects', 'settings', 'terminal', 'rail'],
+          description: 'Which panel to open. "tasks" = the day-planner tasks modal; "notifications" = new board comments; "board" = the cross-repo ticket board; "rail" expands the left HUD rail.'
+        },
+        board: { type: 'string', description: 'For panel="board": the board name to open it filtered to (e.g. "Lumi", "LumiLens").' },
+        ticket: { type: 'number', description: 'For panel="board": an issue number to open straight into its detail view. Pass `board` too if the number is ambiguous across boards.' },
+        day: { type: 'string', description: 'For panel="tasks" or "calendar": a YYYY-MM-DD day to open focused on (default today).' }
       },
       required: ['panel']
     }
@@ -583,7 +717,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'dispatch_worker',
     description:
-      'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote.',
+      'Dispatch an autonomous worker agent to FIX an issue in one of the registered projects. The worker runs in an isolated git worktree, makes the change on a new branch, runs the repo checks, and opens a PR (it NEVER pushes to main) — the PR is logged to the review queue for the user to approve. Use this for concrete fix-it tasks across the ecosystem, not for questions. Requires the project to have a GitHub remote. When dispatching FROM a board ticket, pass its ticketNumber so the PR is branched `artemis/ticket-<n>` and includes `Closes #<n>` — GitHub then wires the ticket↔PR↔board together and moves the ticket to Done on merge.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -595,7 +729,12 @@ const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'A clear, self-contained description of the fix the worker should make'
         },
-        title: { type: 'string', description: 'Optional PR title (defaults to the task)' }
+        title: { type: 'string', description: 'Optional PR title (defaults to the task)' },
+        ticketNumber: {
+          type: 'number',
+          description: 'If this fix is for a board ticket, its issue number — links the PR back to the ticket.'
+        },
+        ticketUrl: { type: 'string', description: 'Optional: the ticket URL, for the PR body.' }
       },
       required: ['project', 'task']
     }
@@ -825,6 +964,8 @@ async function toolDispatchWorker(input: {
   project: string
   task: string
   title?: string
+  ticketNumber?: number
+  ticketUrl?: string
 }): Promise<string> {
   const projects = listProjects()
   const match = projects.find(
@@ -839,10 +980,13 @@ async function toolDispatchWorker(input: {
     remote: match.remote,
     task: input.task,
     title: input.title,
-    label: 'worker'
+    label: 'worker',
+    ticketNumber: input.ticketNumber,
+    ticketUrl: input.ticketUrl
   })
+  const linked = input.ticketNumber != null ? ` Linked to ticket #${input.ticketNumber} (Closes #${input.ticketNumber}).` : ''
   return result.ok
-    ? `Opened a PR for "${match.name}": ${result.url} (branch ${result.branch}). It's in the review queue for your approval.`
+    ? `Opened a PR for "${match.name}": ${result.url} (branch ${result.branch}).${linked} It's in the review queue for your approval.`
     : `Worker did not open a PR for "${match.name}": ${result.error}`
 }
 
@@ -874,21 +1018,356 @@ function toolReadClipboard(): string {
   return 'The clipboard is empty (no text).'
 }
 
-/** Read the local PR Review Queue — worker-agent PRs awaiting the user's approval. */
-function toolPrQueue(): string {
+/** A compact, human-readable outcome line for a PR (merge state + CI + reviews). */
+function fmtPrOutcome(p: { state: string | null; checks: string | null; reviewDecision: string | null }): string {
+  const bits: string[] = []
+  if (p.state) bits.push(p.state === 'merged' ? '⛙ merged' : p.state === 'closed' ? '✕ closed' : 'open')
+  if (p.checks && p.checks !== 'none') {
+    bits.push(p.checks === 'success' ? 'CI ✓' : p.checks === 'failure' ? 'CI ✗' : 'CI …')
+  }
+  if (p.reviewDecision && p.reviewDecision !== 'none') {
+    bits.push(
+      p.reviewDecision === 'approved'
+        ? 'approved'
+        : p.reviewDecision === 'changes_requested'
+          ? 'changes requested'
+          : 'review required'
+    )
+  }
+  return bits.join(' · ')
+}
+
+/** Read the local PR Review Queue — worker-agent PRs awaiting the user's approval. With
+ *  refresh, pulls each pending PR's live outcome (merge/CI/review) from GitHub first. */
+async function toolPrQueue(input: { refresh?: boolean }): Promise<string> {
+  if (input?.refresh) {
+    try {
+      await syncPrOutcomes()
+    } catch {
+      /* network/gh hiccup — fall back to last-known outcomes */
+    }
+  }
   const prs = listPrReviews()
   if (!prs.length) {
     return 'The PR Review Queue is empty — no agent-opened PRs are awaiting review. (For live open PRs on GitHub across all repos, use ecosystem_status.)'
   }
   const pending = prs.filter((p) => !p.reviewed).length
   const rows = prs.map((p) => {
-    const head = `${p.reviewed ? '✓ reviewed' : '• awaiting review'} — [${p.project}] ${p.title}`
-    const meta = [p.branch ? `branch ${p.branch}` : '', p.agent ? `by ${p.agent}` : '']
+    const head = `${p.reviewed ? '✓ reviewed' : '• awaiting review'} — [#${p.id} · ${p.project}] ${p.title}`
+    const outcome = fmtPrOutcome(p)
+    const meta = [p.branch ? `branch ${p.branch}` : '', p.agent ? `by ${p.agent}` : '', outcome]
       .filter(Boolean)
       .join(', ')
     return `${head}${meta ? `\n    ${meta}` : ''}\n    ${p.url}`
   })
-  return `PR Review Queue — ${prs.length} total, ${pending} awaiting review:\n\n${rows.join('\n\n')}`
+  const hint = prs.some((p) => p.outcomeSyncedAt == null)
+    ? '\n\n(Outcomes not yet pulled — call again with refresh:true for live merge/CI/review status.)'
+    : ''
+  return `PR Review Queue — ${prs.length} total, ${pending} awaiting review:\n\n${rows.join('\n\n')}${hint}`
+}
+
+/** Mark a PR in the review queue reviewed/unreviewed, or clear all reviewed rows. The queue is
+ *  LOCAL (no GitHub effect) — this just moves the human's approval flag. Gated all the same. */
+function toolPrReview(input: { id?: number; reviewed?: boolean; clearReviewed?: boolean }): string {
+  if (input.clearReviewed) {
+    clearReviewedPrs()
+    return 'Cleared all reviewed PRs from the queue.'
+  }
+  if (typeof input.id !== 'number') return 'Pass the PR queue id (the #<id> from pr_queue), or clearReviewed:true.'
+  const match = listPrReviews().find((p) => p.id === input.id)
+  if (!match) return `No PR with queue id #${input.id}. Run pr_queue to see ids.`
+  const reviewed = input.reviewed !== false // default true
+  setPrReviewed(input.id, reviewed)
+  return `Marked PR #${input.id} ([${match.project}] ${match.title}) ${reviewed ? 'reviewed' : 'not reviewed'}.`
+}
+
+/** New (unread) comments across watched boards — the notifications feed, read-only. */
+function toolNotificationsView(input: { project?: string }): string {
+  let notifs = listUnreadComments()
+  const filter = input?.project?.trim().toLowerCase()
+  if (filter) notifs = notifs.filter((n) => n.project.toLowerCase().includes(filter))
+  if (!notifs.length) {
+    return filter ? `No new comments on "${input!.project}" boards.` : 'No new comments on any watched board.'
+  }
+  const rows = notifs.map((n) => {
+    const where = `${n.boardTitle ? `${n.boardTitle} ` : ''}#${n.issueNumber ?? '?'}`
+    return `• ${n.author} on ${where} — ${n.ticketTitle}\n    "${n.body.replace(/\s+/g, ' ').slice(0, 240)}"`
+  })
+  return `${notifs.length} new comment(s) on your boards:\n\n${rows.join('\n\n')}\n\nReply with ticket_comment, or mark them read with notifications_mark_read.`
+}
+
+/** Advance the "seen" watermark so current board comments stop showing as new. */
+function toolNotificationsMarkRead(input: { project?: string }): string {
+  const before = listUnreadComments().length
+  markCommentsRead(input?.project)
+  const after = listUnreadComments().length
+  return `Marked ${Math.max(0, before - after)} comment(s) read${input?.project ? ` on "${input.project}" boards` : ''}.`
+}
+
+/** Drive app-level settings by voice: which model/brain runs turns, and voice (TTS) on/off.
+ *  Model/backend are stored prefs read fresh each turn (so they apply to the NEXT turn). Voice
+ *  is a renderer toggle, driven via a UI control event. Deliberately does NOT touch the
+ *  permission posture (that gate must stay a human-only, on-screen decision). */
+function toolAppControl(
+  input: { model?: 'opus' | 'sonnet'; backend?: 'anthropic' | 'ollama'; voice?: 'on' | 'off' },
+  ctx?: ToolContext
+): string {
+  const done: string[] = []
+  if (input.model === 'opus' || input.model === 'sonnet') {
+    const id = input.model === 'opus' ? 'claude-opus-4-8' : 'claude-sonnet-4-6'
+    setModel(id)
+    ctx?.emit?.({ ui: { control: 'model', value: id } }) // keep the titlebar toggle in sync
+    done.push(`model → ${input.model} (takes effect next turn)`)
+  }
+  if (input.backend === 'anthropic' || input.backend === 'ollama') {
+    setBackend(input.backend)
+    ctx?.emit?.({ ui: { control: 'backend', value: input.backend } })
+    done.push(`brain → ${input.backend === 'ollama' ? 'local (Ollama)' : 'cloud (Anthropic)'} (next turn)`)
+  }
+  if ((input.voice === 'on' || input.voice === 'off') && ctx?.emit) {
+    ctx.emit({ ui: { control: 'voice', value: input.voice } })
+    done.push(`voice ${input.voice}`)
+  }
+  if (!done.length) return 'Nothing to change — pass model ("opus"/"sonnet"), backend ("anthropic"/"ollama"), and/or voice ("on"/"off").'
+  return `Done: ${done.join(', ')}.`
+}
+
+// ─── GitHub Projects ticket board (the ticket operator loop) ────────────────
+
+/** A board ticket as one line — status, repo #number, title, assignees/labels, PR flag. */
+function fmtTicket(t: ProjectTicket, hasPr: boolean): string {
+  const num = t.issueNumber != null ? `#${t.issueNumber}` : '(draft)'
+  const tags: string[] = []
+  if (t.assignees) tags.push(`@${t.assignees.split(',')[0].trim()}${t.assignees.includes(',') ? '…' : ''}`)
+  if (t.labels) tags.push(...t.labels.split(',').slice(0, 3).map((l) => `#${l.trim()}`))
+  if (hasPr) tags.push('▸ PR open')
+  return `  ${num} ${t.title}${t.repo ? `  [${t.repo}]` : ''}${tags.length ? `  (${tags.join(', ')})` : ''}`
+}
+
+/** Does a worker PR already exist for this ticket? (local join on the artemis/ticket-<n> branch) */
+function ticketHasPr(t: ProjectTicket, prBranches: Array<string | null>): boolean {
+  if (t.issueNumber == null) return false
+  const stable = formatTicketBranch(t.issueNumber)
+  return prBranches.some((b) => b === stable || (b?.startsWith(stable + '-') ?? false))
+}
+
+/** Order status columns actionable-first, Done last, for a readable board dump. */
+function ticketStatusRank(s: string): number {
+  const l = s.toLowerCase()
+  if (l.includes('progress')) return 0
+  if (l === 'todo' || l === 'to do') return 1
+  if (l.includes('triage')) return 2
+  if (l === 'done') return 9
+  return 5
+}
+
+async function toolTicketsView(input: { project?: string; refresh?: boolean }): Promise<string> {
+  const projects = listProjects()
+  // Resolve an optional project filter (loose match), and which projects to refresh.
+  const filter = input?.project?.trim().toLowerCase()
+  const matched = filter
+    ? projects.filter((p) => p.name.toLowerCase().includes(filter) || p.path.toLowerCase().includes(filter))
+    : projects
+  if (input?.refresh) {
+    const withBoards = matched.filter((p) => getProjectBoards(p.path).length > 0)
+    if (!withBoards.length) {
+      return 'No GitHub Projects board is configured for the matching project(s). Set one up in Settings → Connections (owner, org/user, and the project number).'
+    }
+    for (const p of withBoards) {
+      try {
+        await syncBoardForProject(p.name, p.path)
+      } catch (e: unknown) {
+        return `Could not sync the board for "${p.name}": ${e instanceof Error ? e.message : String(e)}`
+      }
+    }
+  }
+  const tickets = filter ? matched.flatMap((p) => listTicketsByProject(p.name)) : listAllTickets()
+  const prBranches = listPrReviews().map((p) => p.branch)
+
+  // Group by BOARD (its GitHub title), NOT by project — a project can map to SEVERAL boards
+  // (e.g. livana-scanner → Lumi + LumiLens), each its own column set, and each can hold a
+  // ticket with the same issue number as another board. Collapsing them under the project
+  // would hide that a "#5" exists on two distinct boards (the trap that misrouted a comment).
+  // Key on boardTitle+project so identically-named boards across projects stay separate.
+  const byBoard = new Map<string, { project: string; boardTitle: string; tickets: ProjectTicket[] }>()
+  for (const t of tickets) {
+    const boardTitle = t.boardTitle || t.project
+    const key = `${t.project} ${boardTitle}`
+    if (!byBoard.has(key)) byBoard.set(key, { project: t.project, boardTitle, tickets: [] })
+    byBoard.get(key)!.tickets.push(t)
+  }
+
+  const lines: string[] = []
+  if (!tickets.length) {
+    lines.push(filter ? `No tickets cached for "${input!.project}".` : 'No tickets cached on any board yet.')
+  } else {
+    lines.push(`Ticket board — ${tickets.length} ticket(s) across ${byBoard.size} board(s):`)
+    for (const { project, boardTitle, tickets: ts } of byBoard.values()) {
+      lines.push('', `▸ ${boardTitle} board  (project: ${project}) — ${ts.length} ticket(s)`)
+      const byStatus = new Map<string, ProjectTicket[]>()
+      for (const t of ts) {
+        const k = t.status || 'No status'
+        if (!byStatus.has(k)) byStatus.set(k, [])
+        byStatus.get(k)!.push(t)
+      }
+      for (const [status, sts] of [...byStatus].sort((a, b) => ticketStatusRank(a[0]) - ticketStatusRank(b[0]))) {
+        lines.push(`   ${status} (${sts.length}):`)
+        lines.push(...sts.map((t) => '  ' + fmtTicket(t, ticketHasPr(t, prBranches))))
+      }
+    }
+  }
+
+  // Board coverage — make the full picture explicit so gaps aren't mistaken for bugs.
+  const configured = projects.filter((p) => getProjectBoards(p.path).length > 0)
+  const unconfigured = projects.filter((p) => getProjectBoards(p.path).length === 0)
+  lines.push(
+    '',
+    `Boards configured (${configured.reduce((n, p) => n + getProjectBoards(p.path).length, 0)}): ${
+      configured
+        .flatMap((p) => getProjectBoards(p.path).map((b) => `${b.title || `#${b.number}`} → ${p.name}${b.subdir ? `/${b.subdir}` : ''}`))
+        .join('; ') || '(none)'
+    }.`
+  )
+  if (unconfigured.length) {
+    lines.push(`No board mapped: ${unconfigured.map((p) => p.name).join(', ')} — expected; these surface no tickets unless you map a board.`)
+  }
+  lines.push(
+    '',
+    'Note: a ticket\'s [repo] is where the issue LIVES on GitHub; its board is the Projects v2 board it\'s tracked on — a single board can aggregate issues from several repos, so [repo] ≠ board.',
+    'IMPORTANT: the same issue number can exist on more than one board of a project (e.g. Lumi #5 and LumiLens #5 are DIFFERENT tickets). When you comment/update/open/dispatch, pass `board` (the board name above) so you act on the right one — if you omit it and the number is ambiguous, the tool will refuse and ask you to specify.',
+    'To act on a ticket, dispatch_worker with its number as ticketNumber (the PR will Closes #n).'
+  )
+  return lines.join('\n')
+}
+
+async function toolTicketCreate(input: {
+  project: string
+  board?: string
+  title: string
+  body?: string
+  status?: string
+}): Promise<string> {
+  const projects = listProjects()
+  const match = projects.find((p) => p.name.toLowerCase() === input.project.trim().toLowerCase())
+  if (!match) {
+    return `No project named "${input.project}". Registered: ${projects.map((p) => p.name).join(', ') || '(none)'}.`
+  }
+  if (!match.remote) return `Project "${match.name}" has no GitHub remote — cannot create an issue.`
+  // Which board to file onto — a project can map to several (e.g. Lumi + LumiLens).
+  const boards = getProjectBoards(match.path)
+  const q = input.board?.trim().toLowerCase()
+  const board =
+    (q ? boards.find((b) => (b.title ?? '').toLowerCase() === q || String(b.number) === q) : undefined) ??
+    (boards.length === 1 ? boards[0] : null)
+  if (!board && boards.length > 1) {
+    return `"${match.name}" has multiple boards — say which: ${boards.map((b) => b.title || `#${b.number}`).join(', ')}.`
+  }
+  try {
+    const res = await createTicket({
+      projectName: match.name,
+      projectPath: match.path,
+      remote: match.remote,
+      board,
+      title: input.title,
+      body: input.body,
+      status: input.status
+    })
+    if (res.onBoard) {
+      return `Created issue #${res.number} in "${match.name}" and added it to the board${res.statusSet ? ` (status: ${res.statusSet})` : ''}: ${res.url}`
+    }
+    // The issue exists but no board was reachable — be explicit so it isn't mistaken for "on the board".
+    return (
+      `Created issue #${res.number} in "${match.name}": ${res.url}\n` +
+      `Note: "${match.name}" has no GitHub Projects board mapped, so the issue was NOT added to a board` +
+      `${input.status ? ' and its status column was not set' : ''}. Map one in Settings → Connections, then it appears on the board.`
+    )
+  } catch (e: unknown) {
+    return `Could not create the ticket: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+/** Resolve a ticket from the cache by project + issue number → its repo, board item id, and
+ *  the board it's on (for status moves). A board ticket's issue can live in another repo. */
+function resolveTicketTarget(
+  project: string,
+  number: number,
+  board?: string
+): {
+  match: ReturnType<typeof listProjects>[number]
+  repo: string | null
+  itemId?: string
+  board: ReturnType<typeof getProjectBoards>[number] | null
+  boardTitle: string | null
+} | string {
+  const projects = listProjects()
+  const match = projects.find((p) => p.name.toLowerCase() === project.trim().toLowerCase())
+  if (!match) return `No project named "${project}". Registered: ${projects.map((p) => p.name).join(', ') || '(none)'}.`
+
+  // All cached tickets with this issue number — there may be MORE THAN ONE across the project's
+  // boards (Lumi #5 vs LumiLens #5 are different GitHub issues). Disambiguate by board name.
+  let candidates = listTicketsByProject(match.name).filter((t) => t.issueNumber === number)
+  if (board) {
+    const want = board.trim().toLowerCase()
+    candidates = candidates.filter((t) => (t.boardTitle ?? '').toLowerCase() === want)
+    if (!candidates.length) {
+      const boards = [...new Set(listTicketsByProject(match.name).filter((t) => t.issueNumber === number).map((t) => t.boardTitle).filter(Boolean))]
+      return `No #${number} on the "${board}" board in "${match.name}".${boards.length ? ` It exists on: ${boards.join(', ')}.` : ''}`
+    }
+  } else {
+    const distinctBoards = [...new Set(candidates.map((t) => t.boardTitle).filter(Boolean))]
+    if (distinctBoards.length > 1) {
+      return `#${number} exists on multiple boards in "${match.name}": ${distinctBoards.join(', ')}. Pass board:"…" to say which one.`
+    }
+  }
+
+  const cached = candidates[0]
+  const repo = cached?.repo || parseGitRemote(match.remote)?.slug || null
+  if (!repo) return `Couldn't resolve a GitHub repo for #${number} in "${match.name}".`
+  const boards = getProjectBoards(match.path)
+  const boardCfg = boards.find((b) => b.boardId && b.boardId === cached?.boardId) ?? (boards.length === 1 ? boards[0] : null)
+  return { match, repo, itemId: cached?.itemId, board: boardCfg, boardTitle: cached?.boardTitle ?? boardCfg?.title ?? null }
+}
+
+async function toolTicketComment(input: { project: string; number: number; body: string; board?: string }): Promise<string> {
+  const r = resolveTicketTarget(input.project, input.number, input.board)
+  if (typeof r === 'string') return r
+  try {
+    await addTicketComment(r.repo!, input.number, input.body)
+    const where = r.boardTitle ? `on the "${r.boardTitle}" board ` : ''
+    return `Commented on #${input.number} ${where}(${r.repo}).`
+  } catch (e: unknown) {
+    return `Could not post the comment: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function toolTicketUpdate(input: {
+  project: string
+  number: number
+  status?: string
+  state?: 'open' | 'closed'
+  board?: string
+}): Promise<string> {
+  if (!input.status && !input.state) return 'Nothing to update — pass a status and/or state.'
+  const r = resolveTicketTarget(input.project, input.number, input.board)
+  if (typeof r === 'string') return r
+  try {
+    await updateTicket({
+      projectName: r.match.name,
+      projectPath: r.match.path,
+      repo: r.repo,
+      board: r.board,
+      number: input.number,
+      itemId: r.itemId,
+      patch: { status: input.status, state: input.state }
+    })
+    const done = [input.status ? `status → ${input.status}` : '', input.state ? (input.state === 'closed' ? 'closed' : 'reopened') : '']
+      .filter(Boolean)
+      .join(', ')
+    const where = r.boardTitle ? ` on the "${r.boardTitle}" board` : ''
+    return `Updated #${input.number} (${r.repo})${where}: ${done}.`
+  } catch (e: unknown) {
+    return `Could not update the ticket: ${e instanceof Error ? e.message : String(e)}`
+  }
 }
 
 // ─── Day planner: todos (a ticket system) + local calendar ──────────────────
@@ -1037,13 +1516,48 @@ function toolPlanMyDay(input: { day?: string }): string {
   return [`Planning input for ${dayLabel(day)} — synthesise a focused plan from this:`, '', toolTasksView({ day }), '', toolCalendarView({ day })].join('\n')
 }
 
-const PANELS = ['pr_queue', 'briefing', 'calendar', 'projects', 'settings', 'terminal', 'rail']
+const PANELS = ['pr_queue', 'board', 'tasks', 'calendar', 'notifications', 'briefing', 'projects', 'settings', 'terminal', 'rail']
 
 /** Drive the face: ask the renderer to open a panel so the user sees it, not just reads it. */
-function toolShowPanel(input: { panel?: string }, ctx?: ToolContext): string {
+function toolShowPanel(input: { panel?: string; board?: string; project?: string; ticket?: number; day?: string }, ctx?: ToolContext): string {
   const panel = String(input.panel ?? '')
   if (!PANELS.includes(panel)) return `Unknown panel '${panel}'. Valid panels: ${PANELS.join(', ')}.`
   if (!ctx?.emit) return 'Cannot open panels right now (no UI attached).'
+
+  // Day-focused surfaces: open the tasks / calendar modal on a specific day.
+  if (panel === 'tasks' || panel === 'calendar') {
+    const day = input.day && /^\d{4}-\d{2}-\d{2}$/.test(input.day) ? input.day : undefined
+    ctx.emit({ ui: { panel, ...(day ? { day } : {}) } })
+    return `Opened the ${panel} panel${day ? ` on ${day}` : ''} for the user.`
+  }
+
+  if (panel === 'board') {
+    let board = input.board ? String(input.board) : undefined
+    const num = typeof input.ticket === 'number' ? input.ticket : undefined
+    if (num != null) {
+      // Resolve the ticket in the cache so we open the RIGHT board for it (and catch the
+      // "same number on two boards" trap) rather than trusting a guessed board name.
+      const projects = listProjects()
+      const scope = input.project
+        ? projects.filter((p) => p.name.toLowerCase() === input.project!.trim().toLowerCase())
+        : projects
+      let hits = scope.flatMap((p) => listTicketsByProject(p.name)).filter((t) => t.issueNumber === num)
+      if (board) hits = hits.filter((t) => (t.boardTitle ?? '').toLowerCase() === board!.toLowerCase())
+      const distinctBoards = [...new Set(hits.map((t) => t.boardTitle ?? t.project))]
+      if (!hits.length) {
+        return `No cached ticket #${num}${board ? ` on the "${board}" board` : ''}. Run tickets_view (refresh:true) first, or check the number/board.`
+      }
+      if (distinctBoards.length > 1) {
+        return `#${num} exists on multiple boards: ${distinctBoards.join(', ')}. Pass board:"…" so I open the right one.`
+      }
+      board = hits[0].boardTitle ?? board
+      ctx.emit({ ui: { panel, ...(board ? { board } : {}), ticket: num } })
+      return `Opened ticket #${num}${board ? ` on the "${board}" board` : ''} for the user.`
+    }
+    ctx.emit({ ui: { panel, ...(board ? { board } : {}) } })
+    return board ? `Opened the board filtered to "${board}" for the user.` : 'Opened the ticket board for the user.'
+  }
+
   ctx.emit({ ui: { panel } })
   return panel === 'rail' ? 'Expanded the HUD rail for the user.' : `Opened the ${panel.replace('_', ' ')} panel for the user.`
 }
@@ -1122,21 +1636,26 @@ async function toolEcosystemStatus(): Promise<string> {
         }
       }
       const branch = (await run('git rev-parse --abbrev-ref HEAD')) || '(no git)'
-      const status = await run('git status --porcelain')
+      // If the project is a monorepo subdirectory, scope file-level metrics to it via the
+      // `.` pathspec (resolves to cwd) so a workspace reports its own status, not the whole
+      // repo. Empty prefix = the project IS the repo root, where `.` is the whole repo anyway.
+      const prefix = (await run('git rev-parse --show-prefix')).trim()
+      const status = await run('git status --porcelain .')
       const changed = status ? status.split('\n').filter(Boolean) : []
       // Single-quote formats with spaces: the shell would otherwise split them into
       // separate args / treat parens as a subshell (→ empty result).
-      const last = (await run("git log -1 --pretty=format:'%h %s (%cr)'")) || '(no commits)'
-      const recent = (await run("git log --since='7 days ago' --oneline"))
+      const last = (await run("git log -1 --pretty=format:'%h %s (%cr)' -- .")) || '(no commits)'
+      const recent = (await run("git log --since='7 days ago' --oneline -- ."))
         .split('\n')
         .filter(Boolean).length
       const ahead = (await run('git rev-list --count @{u}..HEAD')) || '0'
       const behind = (await run('git rev-list --count HEAD..@{u}')) || '0'
       const sync = ahead !== '0' || behind !== '0' ? ` [↑${ahead} ↓${behind}]` : ''
       const star = p.path === activePath ? ' ←active' : ''
+      const ws = prefix ? ` ⟂${prefix.replace(/\/$/, '')}` : '' // workspace marker for a subdir project
 
       const lines = [
-        `• ${p.name}${star} — ${branch}${sync}, ${changed.length} uncommitted file(s)`,
+        `• ${p.name}${ws}${star} — ${branch}${sync}, ${changed.length} uncommitted file(s)`,
         `    last: ${last}`,
         `    activity: ${recent} commit(s) in last 7 days`
       ]
@@ -1222,7 +1741,23 @@ export async function executeTool(
     case 'system_context':
       return toolSystemContext()
     case 'pr_queue':
-      return toolPrQueue()
+      return toolPrQueue(input as Parameters<typeof toolPrQueue>[0])
+    case 'pr_review':
+      return toolPrReview(input as Parameters<typeof toolPrReview>[0])
+    case 'notifications_view':
+      return toolNotificationsView(input as Parameters<typeof toolNotificationsView>[0])
+    case 'notifications_mark_read':
+      return toolNotificationsMarkRead(input as Parameters<typeof toolNotificationsMarkRead>[0])
+    case 'app_control':
+      return toolAppControl(input as Parameters<typeof toolAppControl>[0], ctx)
+    case 'tickets_view':
+      return toolTicketsView(input as Parameters<typeof toolTicketsView>[0])
+    case 'ticket_create':
+      return toolTicketCreate(input as Parameters<typeof toolTicketCreate>[0])
+    case 'ticket_comment':
+      return toolTicketComment(input as Parameters<typeof toolTicketComment>[0])
+    case 'ticket_update':
+      return toolTicketUpdate(input as Parameters<typeof toolTicketUpdate>[0])
     case 'read_clipboard':
       return toolReadClipboard()
     case 'tasks_view':
@@ -1246,7 +1781,7 @@ export async function executeTool(
     case 'plan_my_day':
       return toolPlanMyDay(input as Parameters<typeof toolPlanMyDay>[0])
     case 'show_panel':
-      return toolShowPanel(input as { panel?: string }, ctx)
+      return toolShowPanel(input as { panel?: string; board?: string; project?: string; ticket?: number; day?: string }, ctx)
     case 'switch_project':
       return toolSwitchProject(input as { project?: string }, ctx)
     case 'dispatch_worker':

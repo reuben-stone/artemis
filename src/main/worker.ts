@@ -8,6 +8,7 @@ import { glob } from 'glob'
 import { getModelClient } from './model'
 import { addPrReview } from './store'
 import { parseGitRemote } from './github'
+import { formatTicketBranch, formatClosesLine } from './board'
 import { DANGEROUS, clampToolOutput } from './safety'
 
 const execp = promisify(exec)
@@ -37,6 +38,17 @@ export interface WorkerSpec {
   title?: string
   /** Label shown in the review queue (e.g. "worker-1"). */
   label?: string
+  /** If dispatched FROM a project ticket: its issue number. Drives the linkable
+   *  `artemis/ticket-<n>` branch and a `Closes #<n>` line so GitHub wires PR↔ticket↔board. */
+  ticketNumber?: number
+  /** The ticket issue's repo slug (owner/repo). When it differs from the project's repo (a
+   *  board can track issues from another repo), the PR uses a cross-repo `Closes owner/repo#n`. */
+  ticketRepo?: string | null
+  /** The ticket's URL, for the PR body (optional, informational). */
+  ticketUrl?: string
+  /** Monorepo subdir to FOCUS on (from the ticket's board), e.g. "apps/scanner". Full repo
+   *  access is retained for shared code; this just focuses the worker + scopes its checks. */
+  subdir?: string | null
 }
 
 export interface WorkerResult {
@@ -182,11 +194,12 @@ async function git(repo: string, args: string): Promise<string> {
   return (await execp(`git ${args}`, { cwd: repo, maxBuffer: 4 * 1024 * 1024 })).stdout.trim()
 }
 
-/** Best-effort: run the repo's typecheck/test scripts if defined, summarise for the PR body. */
-async function runChecks(worktree: string): Promise<string> {
+/** Best-effort: run the workspace's typecheck/test scripts if defined, for the PR body.
+ *  `dir` is the scoped workspace (a monorepo subdir) or the repo root. */
+async function runChecks(dir: string): Promise<string> {
   let scripts: Record<string, string> = {}
   try {
-    scripts = JSON.parse(await fs.readFile(join(worktree, 'package.json'), 'utf8')).scripts ?? {}
+    scripts = JSON.parse(await fs.readFile(join(dir, 'package.json'), 'utf8')).scripts ?? {}
   } catch {
     return 'No package.json — checks skipped.'
   }
@@ -195,7 +208,7 @@ async function runChecks(worktree: string): Promise<string> {
   const lines: string[] = []
   for (const s of wanted) {
     try {
-      await execp(`npm run -s ${s}`, { cwd: worktree, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 })
+      await execp(`npm run -s ${s}`, { cwd: dir, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 })
       lines.push(`- \`npm run ${s}\`: ✅ passed`)
     } catch (e: unknown) {
       lines.push(`- \`npm run ${s}\`: ❌ failed`)
@@ -209,27 +222,52 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
   if (!gh) return { ok: false, error: 'Project has no GitHub remote — cannot open a PR.' }
 
   const title = (spec.title || spec.task).slice(0, 80)
-  const branch = `artemis/${kebab(spec.task) || 'fix'}-${shortId()}`
   const worktree = join(os.tmpdir(), `artemis-wt-${shortId()}`)
   const base = (await git(spec.projectPath, 'rev-parse --abbrev-ref HEAD').catch(() => 'main')) || 'main'
+  // Focus on a monorepo workspace when one is given (the ticket's board carries it), or when
+  // the project itself is a subdir (`--show-prefix`). Empty = operate at the repo root.
+  const prefix =
+    spec.subdir?.replace(/^\/+|\/+$/g, '') ||
+    (await git(spec.projectPath, 'rev-parse --show-prefix').catch(() => '')).trim()
 
-  // 1. isolated worktree on a fresh branch off the current HEAD
+  // 1. isolated worktree on a fresh branch off the current HEAD. Dispatched from a ticket →
+  //    the stable, linkable `artemis/ticket-<n>`; otherwise a task-derived name.
+  let branch =
+    spec.ticketNumber != null
+      ? formatTicketBranch(spec.ticketNumber)
+      : `artemis/${kebab(spec.task) || 'fix'}-${shortId()}`
   try {
     await git(spec.projectPath, `worktree add -b ${branch} "${worktree}" HEAD`)
-  } catch (e: unknown) {
-    return { ok: false, error: `Could not create worktree: ${e instanceof Error ? e.message : String(e)}` }
+  } catch {
+    // Branch likely already exists (e.g. re-dispatching the same ticket) — retry uniquely.
+    branch = `${branch}-${shortId()}`
+    try {
+      await git(spec.projectPath, `worktree add -b ${branch} "${worktree}" HEAD`)
+    } catch (e: unknown) {
+      return { ok: false, error: `Could not create worktree: ${e instanceof Error ? e.message : String(e)}` }
+    }
   }
 
+  // The workspace this ticket's board is scoped to (a monorepo subdir), or the whole repo.
+  const scopedDir = prefix ? join(worktree, prefix) : worktree
+  const workspace = prefix.replace(/\/$/, '')
+
   try {
-    // 2. the focused worker sub-agent
+    // 2. the focused worker sub-agent. Full-repo ACCESS (monorepo workspaces share code — the
+    //    fix may need shared packages / root config), but FOCUSED on the workspace.
     const client = await getModelClient()
     const system = [
-      `You are an autonomous WORKER agent fixing one specific issue in the "${spec.projectName}" repo.`,
-      `Your working directory is ${worktree} — operate ONLY within it, using absolute paths under it.`,
+      `You are an autonomous WORKER agent fixing one specific issue in the "${spec.projectName}" project.`,
+      `Your working directory is the repository root: ${worktree}. Use absolute paths under it.`,
+      prefix
+        ? `FOCUS your change on the "${workspace}" workspace (${scopedDir}). You MAY read and edit shared code elsewhere in the repo — shared packages, root config — when the task genuinely needs it (monorepo workspaces share code), but don't make unrelated changes outside the workspace.`
+        : '',
       `Make the MINIMAL, focused change to accomplish the task. Inspect before editing.`,
       `Do NOT run git commit/push, do NOT touch other repos, do NOT do unrelated cleanup.`,
       `When the change is complete, stop (end your turn) with a one-paragraph summary of what you changed and why.`
-    ].join('\n')
+    ]
+      .filter(Boolean)
+      .join('\n')
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `Task: ${spec.task}` }]
 
     let summary = ''
@@ -247,6 +285,8 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
       for (const block of final.content) {
         if (block.type !== 'tool_use') continue
         try {
+          // Tools operate at the repo root so the worker can reach shared code; the prompt
+          // keeps it focused on the workspace.
           const out = await executeWorkerTool(block.name, block.input as Record<string, unknown>, worktree)
           results.push({ type: 'tool_result', tool_use_id: block.id, content: clampToolOutput(out) })
         } catch (e: unknown) {
@@ -265,8 +305,13 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
     const dirty = await git(worktree, 'status --porcelain')
     if (!dirty) return { ok: false, error: 'Worker made no changes — no PR opened.' }
 
-    // 4. best-effort checks (reported in the PR body, non-blocking)
-    const checks = await runChecks(worktree)
+    // 4. best-effort checks — prefer the workspace's own scripts; if it has none (a monorepo
+    //    that runs checks from the root, e.g. turbo), fall back to the repo root. Non-blocking.
+    let checks = await runChecks(scopedDir)
+    if (prefix && /skipped/.test(checks)) {
+      const rootChecks = await runChecks(worktree)
+      if (!/skipped/.test(rootChecks)) checks = rootChecks
+    }
 
     // 5. commit + push the branch (never main)
     await git(worktree, 'add -A')
@@ -275,6 +320,13 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
 
     // 6. open the PR via gh
     const body = [
+      // A leading `Closes #n` makes GitHub natively link the PR to the ticket (and move it
+      // on the board on merge) — the whole trick of the ticket operator loop. If the issue
+      // lives in a different repo than this PR, use the cross-repo `Closes owner/repo#n`.
+      spec.ticketNumber != null
+        ? formatClosesLine(spec.ticketNumber, spec.ticketRepo && spec.ticketRepo !== gh.slug ? spec.ticketRepo : undefined)
+        : undefined,
+      spec.ticketNumber != null ? `` : undefined,
       `**Automated by Artemis worker agent${spec.label ? ` (${spec.label})` : ''}.**`,
       ``,
       `**Task:** ${spec.task}`,

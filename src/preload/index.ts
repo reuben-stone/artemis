@@ -10,6 +10,7 @@ export interface Project {
   active: boolean
   gh: { slug: string; url: string } | null
   gaProps: GaProp[]
+  boards: BoardConfig[]
 }
 
 export interface GaProp {
@@ -17,9 +18,46 @@ export interface GaProp {
   id: string
 }
 
+// Per-project GitHub Projects (v2) board config — which board this repo's tickets live on.
+// Source platform of a board. Only 'github' is wired today; the field is the seam for adding
+// Jira / Azure DevOps Boards later without reshaping the cache, tools, or UI. Absent = 'github'.
+export type BoardProviderId = 'github' | 'jira' | 'azure'
+
+export interface BoardConfig {
+  provider?: BoardProviderId
+  owner: string
+  ownerType: 'org' | 'user'
+  number: number
+  subdir?: string // monorepo workspace this board focuses worker dispatch on (e.g. "apps/scanner")
+  boardId?: string
+  title?: string
+  statusFieldId?: string
+  statusOptions?: Array<{ id: string; name: string }>
+}
+
+// A cached cross-repo board ticket (the ingest half of the ticket operator loop).
+export interface ProjectTicket {
+  id: number
+  project: string
+  repo: string | null
+  boardId: string
+  boardTitle: string | null
+  itemId: string
+  issueNumber: number | null
+  contentId: string | null
+  title: string
+  status: string | null
+  assignees: string | null
+  labels: string | null
+  url: string | null
+  updatedAt: number | null
+  syncedAt: number
+}
+
 export interface BriefingProject {
   name: string
   url: string | null
+  subdir: string | null
   branch: string | null
   dirty: string[]
   activity7d: number
@@ -55,6 +93,51 @@ export interface PrReview {
   agent: string | null
   reviewed: boolean
   created_at: number
+  // Live outcome pulled from GitHub (null until synced) — the "close the loop" signal.
+  state: string | null // open | merged | closed
+  checks: string | null // success | failure | pending | none
+  reviewDecision: string | null // approved | changes_requested | review_required | none
+  outcomeSyncedAt: number | null
+}
+
+export interface WorkerResult {
+  ok: boolean
+  url?: string
+  branch?: string
+  error?: string
+}
+
+export interface TicketComment {
+  id: string // GitHub node id — needed to edit/delete
+  author: string
+  body: string
+  createdAt: string
+  viewerDidAuthor: boolean // you wrote it → can edit/delete
+}
+
+// A new (unread) comment on a watched board, for the Notifications card.
+export interface CommentNotification {
+  project: string
+  boardTitle: string | null
+  repo: string | null
+  issueNumber: number | null
+  ticketTitle: string
+  url: string | null
+  author: string
+  body: string
+  createdAt: number
+}
+
+// Full detail for one ticket (the body + comments aren't in the board cache), for the detail view.
+export interface TicketDetail {
+  number: number
+  title: string
+  body: string
+  state: string // open | closed
+  url: string
+  labels: string[]
+  assignees: string[]
+  comments: TicketComment[]
 }
 
 export type PermissionMode = 'guarded' | 'smart'
@@ -167,7 +250,9 @@ const api = {
     setGaCredentials: (): Promise<{ ok: boolean; configured: boolean; error?: string }> =>
       ipcRenderer.invoke('connections:setGaCredentials'),
     clearGaCredentials: (): Promise<{ configured: boolean }> =>
-      ipcRenderer.invoke('connections:clearGaCredentials')
+      ipcRenderer.invoke('connections:clearGaCredentials'),
+    // True if the gh token carries the Projects v2 scope (read:project/project).
+    checkProjectScope: (): Promise<boolean> => ipcRenderer.invoke('connections:checkProjectScope')
   },
   // On-command briefing — gather structured ecosystem data for the card.
   briefing: {
@@ -177,6 +262,8 @@ const api = {
   // CRUDs via its tools, so the rail and the agent never diverge.
   tasks: {
     list: (day?: string): Promise<Todo[]> => ipcRenderer.invoke('tasks:list', day),
+    // Unfinished tasks parked on days before `day` — carry-over candidates for the Tasks modal.
+    listBefore: (day?: string): Promise<Todo[]> => ipcRenderer.invoke('tasks:listBefore', day),
     add: (input: { day?: string; text: string; priority?: string; project?: string }): Promise<Todo> =>
       ipcRenderer.invoke('tasks:add', input),
     update: (
@@ -197,11 +284,92 @@ const api = {
     ): Promise<CalendarEvent | null> => ipcRenderer.invoke('calendar:update', { id, patch }),
     remove: (id: number): Promise<void> => ipcRenderer.invoke('calendar:remove', id)
   },
+  // GitHub Projects ticket board — the ingest half of the ticket operator loop.
+  tickets: {
+    list: (project?: string): Promise<ProjectTicket[]> => ipcRenderer.invoke('tickets:list', project),
+    // Re-sync from GitHub; returns the refreshed tickets plus any per-project errors.
+    sync: (project?: string): Promise<{ tickets: ProjectTicket[]; errors: string[] }> =>
+      ipcRenderer.invoke('tickets:sync', project),
+    create: (input: { project: string; boardNumber?: number; title: string; body?: string; status?: string }): Promise<
+      { ok: true; url: string; number: number; onBoard: boolean; statusSet: string | null } | { ok: false; error: string }
+    > => ipcRenderer.invoke('tickets:create', input),
+    // Full detail (incl. body) for the in-app detail view. `repo` is the issue's own repo.
+    detail: (
+      project: string,
+      repo: string | null,
+      number: number
+    ): Promise<{ ok: true; detail: TicketDetail } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('tickets:detail', { project, repo, number }),
+    // Edit a ticket from inside Artemis (title/body/state/status). Returns the refreshed board.
+    update: (input: {
+      project: string
+      repo?: string | null
+      number: number
+      itemId?: string | null
+      boardId?: string | null
+      patch: { title?: string; body?: string; state?: 'open' | 'closed'; status?: string }
+    }): Promise<{ ok: true; tickets: ProjectTicket[] } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('tickets:update', input),
+    // Post a comment on a ticket. Returns the refreshed detail (incl. the new comment).
+    comment: (input: {
+      project: string
+      repo?: string | null
+      number: number
+      body: string
+    }): Promise<{ ok: true; detail: TicketDetail } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('tickets:comment', input),
+    // Edit one of your own comments (by node id). Returns the refreshed thread.
+    editComment: (input: {
+      project: string
+      repo?: string | null
+      number: number
+      commentId: string
+      body: string
+    }): Promise<{ ok: true; detail: TicketDetail } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('tickets:editComment', input),
+    // Delete one of your own comments (by node id). Returns the refreshed thread.
+    deleteComment: (input: {
+      project: string
+      repo?: string | null
+      number: number
+      commentId: string
+    }): Promise<{ ok: true; detail: TicketDetail } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('tickets:deleteComment', input),
+    // Dispatch a worker FROM a ticket — the click is the human gate; the PR Closes #n.
+    dispatch: (input: {
+      project: string
+      ticketNumber?: number
+      ticketRepo?: string | null
+      ticketUrl?: string
+      boardId?: string | null
+      task: string
+      title?: string
+    }): Promise<WorkerResult> => ipcRenderer.invoke('tickets:dispatch', input)
+  },
+  // Ticket-comment notifications — new comments on watched boards (cached during board sync).
+  notifications: {
+    list: (): Promise<CommentNotification[]> => ipcRenderer.invoke('notifications:list'),
+    markRead: (project?: string): Promise<CommentNotification[]> => ipcRenderer.invoke('notifications:markRead', project)
+  },
+  // Per-project board list (owner / org|user / number / subdir), set in Settings → Connections.
+  board: {
+    getBoards: (path: string): Promise<BoardConfig[]> => ipcRenderer.invoke('board:getBoards', path),
+    setBoards: (path: string, boards: BoardConfig[]): Promise<Project[]> =>
+      ipcRenderer.invoke('board:setBoards', { path, boards }),
+    // List an owner's Projects v2 boards for the picker (and whether it's an org or user).
+    listBoards: (
+      owner: string
+    ): Promise<
+      { ok: true; ownerType: 'org' | 'user'; boards: Array<{ number: number; title: string; closed: boolean }> } | { ok: false; error: string }
+    > => ipcRenderer.invoke('board:listBoards', owner)
+  },
   // PR Review Queue — worker-agent PRs awaiting the human's approval.
   prReviews: {
     list: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:list'),
     setReviewed: (id: number, reviewed: boolean): Promise<PrReview[]> =>
       ipcRenderer.invoke('prReviews:setReviewed', { id, reviewed }),
+    // Pull live merge/CI/review outcomes for every pending PR, then return the queue.
+    sync: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:sync'),
     clearReviewed: (): Promise<PrReview[]> => ipcRenderer.invoke('prReviews:clearReviewed')
   },
   agent: {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, RefreshCw, Loader2, Sunrise, ChevronDown, ChevronRight, ExternalLink, GitCommitHorizontal } from 'lucide-react'
+import { X, RefreshCw, Loader2, Sunrise, ChevronDown, ChevronRight, ExternalLink, GitCommitHorizontal, GitBranch, History } from 'lucide-react'
 import type { BriefingData } from '../../../preload'
 
 /**
@@ -25,7 +25,7 @@ export function BriefingCard({
     <div className="dock-card">
       <div className="dock-card-head">
         <span className="dock-card-title">
-          <Sunrise size={14} /> Briefing{data ? ` · ${timeAgo(data.generatedAt)}` : ''}
+          <Sunrise size={14} /> Ecosystem{data ? ` · ${timeAgo(data.generatedAt)}` : ''}
         </span>
         <div className="dock-card-actions">
           <button onClick={onRefresh} disabled={loading} title="Refresh">
@@ -39,8 +39,14 @@ export function BriefingCard({
 
       <div className="dock-card-body">
         {loading && !data ? (
-          <div className="dock-loading">
-            <Loader2 size={16} className="spin" /> Gathering your briefing…
+          <div className="brief-skel" aria-busy="true">
+            {[0, 1].map((i) => (
+              <div className="brief-skel-proj" key={i}>
+                <div className="skel skel-line" style={{ width: '42%' }} />
+                <div className="skel skel-line" style={{ width: '68%' }} />
+                <div className="skel" style={{ height: 40 }} />
+              </div>
+            ))}
           </div>
         ) : !data || data.projects.length === 0 ? (
           <div className="dock-loading">No projects to brief — add repos in Projects.</div>
@@ -58,10 +64,20 @@ export function BriefingCard({
                   ) : (
                     <span className="brief-proj-name">{p.name}</span>
                   )}
-                  <span className="brief-proj-meta">
-                    {p.branch}
-                    {p.activity7d ? ` · ${p.activity7d} commits/7d` : ''}
+                  <span className="brief-spacer" />
+                  <span className={`brief-status ${p.dirty.length ? 'dirty' : 'clean'}`}>
+                    {p.dirty.length ? `${p.dirty.length} uncommitted` : 'clean'}
                   </span>
+                </div>
+                <div className="brief-proj-meta">
+                  <span className="brief-chip">
+                    <GitBranch size={10} /> {p.branch}
+                  </span>
+                  {p.activity7d > 0 && (
+                    <span className="brief-chip dim">
+                      <History size={10} /> {p.activity7d} commit{p.activity7d === 1 ? '' : 's'}/7d
+                    </span>
+                  )}
                 </div>
                 {p.lastCommit &&
                   (p.lastCommit.url ? (
@@ -133,12 +149,15 @@ export function BriefingCard({
 function Kpi({ n, d, label }: { n: number; d: number | null; label: string }): JSX.Element {
   return (
     <div className="kpi">
-      <div className="kpi-num">{fmt(n)}</div>
-      {d !== null && (
-        <div className={`kpi-delta ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}`}>
-          {d > 0 ? '▲' : d < 0 ? '▼' : '–'} {Math.abs(d)}%
-        </div>
-      )}
+      <div className="kpi-top">
+        <span className="kpi-num">{fmt(n)}</span>
+        {d !== null && (
+          <span className={`kpi-delta ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}`}>
+            {d > 0 ? '▲' : d < 0 ? '▼' : '–'}
+            {Math.abs(d)}%
+          </span>
+        )}
+      </div>
       <div className="kpi-label">{label}</div>
     </div>
   )

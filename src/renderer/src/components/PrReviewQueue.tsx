@@ -1,24 +1,39 @@
-import { X, ExternalLink, GitPullRequest, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { X, ExternalLink, GitPullRequest, Trash2, RefreshCw } from 'lucide-react'
 import type { PrReview } from '../../../preload'
+import { PrOutcomeBadges } from './OpsRail'
 
 /**
  * PR Review Queue — a dismissable docked card (bottom-left of the orb window). Each PR
  * a worker agent opens lands here (newest unreviewed first); check them off in the
- * morning. SQLite-backed, so the queue survives restarts.
+ * morning. SQLite-backed, so the queue survives restarts. The sync button pulls each
+ * pending PR's live outcome (merge/CI/review) from GitHub — closing the loop Artemis opens.
  */
 export function PrReviewQueue({
   prs,
   onToggle,
   onClearReviewed,
+  onSync,
   onClose
 }: {
   prs: PrReview[]
   onToggle: (id: number, reviewed: boolean) => void
   onClearReviewed: () => void
+  onSync: () => Promise<void>
   onClose: () => void
 }): JSX.Element {
   const pending = prs.filter((p) => !p.reviewed).length
   const hasReviewed = prs.some((p) => p.reviewed)
+  const [syncing, setSyncing] = useState(false)
+
+  const sync = async (): Promise<void> => {
+    setSyncing(true)
+    try {
+      await onSync()
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   return (
     <div className="dock-card">
@@ -27,6 +42,9 @@ export function PrReviewQueue({
           <GitPullRequest size={14} /> PR Review{pending > 0 ? ` · ${pending}` : ''}
         </span>
         <div className="dock-card-actions">
+          <button onClick={() => void sync()} title="Pull live merge/CI/review status" disabled={syncing}>
+            <RefreshCw size={14} className={syncing ? 'spin' : ''} />
+          </button>
           {hasReviewed && (
             <button onClick={onClearReviewed} title="Remove checked-off PRs">
               <Trash2 size={14} />
@@ -60,6 +78,7 @@ export function PrReviewQueue({
                 {p.branch && <span className="pr-branch">{p.branch}</span>}
                 {p.agent && <span className="pr-agent">{p.agent}</span>}
                 <span className="pr-time">{relativeTime(p.created_at)}</span>
+                <PrOutcomeBadges p={p} />
               </div>
             </div>
           </div>

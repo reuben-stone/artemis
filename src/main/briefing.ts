@@ -15,6 +15,7 @@ const execp = promisify(exec)
 export interface BriefingProject {
   name: string
   url: string | null // repo web url — for linking the name, PRs, and commits to GitHub
+  subdir: string | null // monorepo workspace prefix (e.g. "apps/scanner"), or null at repo root
   branch: string | null
   dirty: string[]
   activity7d: number
@@ -43,16 +44,18 @@ export async function gatherBriefing(): Promise<BriefingData> {
       }
 
       const branch = (await git('rev-parse --abbrev-ref HEAD')) || null
-      const status = await git('status --porcelain')
+      // Scope file-level metrics to a monorepo subdir (pathspec `.` = cwd; whole repo at root).
+      const subdir = (await git('rev-parse --show-prefix')).replace(/\/$/, '') || null
+      const status = await git('status --porcelain .')
       const dirty = status ? status.split('\n').filter(Boolean).map((l) => l.slice(3)) : []
-      const activity7d = (await git("log --since='7 days ago' --oneline")).split('\n').filter(Boolean).length
+      const activity7d = (await git("log --since='7 days ago' --oneline -- .")).split('\n').filter(Boolean).length
 
       const gh = parseGitRemote(p.remote)
       const repoUrl = gh?.url ?? null
 
-      // Last commit, with a link to it on GitHub when we know the remote.
-      const lcShort = await git('log -1 --pretty=format:%h')
-      const lcText = (await git("log -1 --pretty=format:'%h %s (%cr)'")) || null
+      // Last commit (touching this workspace), with a link to it on GitHub when we know the remote.
+      const lcShort = await git('log -1 --pretty=format:%h -- .')
+      const lcText = (await git("log -1 --pretty=format:'%h %s (%cr)' -- .")) || null
       const lastCommit = lcText
         ? { text: lcText, url: lcShort && repoUrl ? `${repoUrl}/commit/${lcShort}` : null }
         : null
@@ -89,7 +92,7 @@ export async function gatherBriefing(): Promise<BriefingData> {
         }
       }
 
-      return { name: p.name, url: repoUrl, branch, dirty, activity7d, lastCommit, prs, analytics }
+      return { name: p.name, url: repoUrl, subdir, branch, dirty, activity7d, lastCommit, prs, analytics }
     })
   )
 
