@@ -1003,7 +1003,7 @@ async function toolDispatchWorker(input: {
   })
   const linked = input.ticketNumber != null ? ` Linked to ticket #${input.ticketNumber} (Closes #${input.ticketNumber}).` : ''
   return result.ok
-    ? `Opened a PR for "${match.name}": ${result.url} (branch ${result.branch}).${linked} It's in the review queue for your approval.`
+    ? `Opened a PR for "${match.name}": ${result.url} (branch ${result.branch})${result.note ?? ''}.${linked} It's in the review queue for your approval.`
     : `Worker did not open a PR for "${match.name}": ${result.error}`
 }
 

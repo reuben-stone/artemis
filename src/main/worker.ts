@@ -56,6 +56,7 @@ export interface WorkerResult {
   url?: string
   branch?: string
   error?: string
+  note?: string // check status / draft / round-cap flags, surfaced in the dispatch result
 }
 
 const MAX_ROUNDS = 30 // runaway guard for the worker's tool loop
@@ -196,25 +197,51 @@ async function git(repo: string, args: string): Promise<string> {
 
 /** Best-effort: run the workspace's typecheck/test scripts if defined, for the PR body.
  *  `dir` is the scoped workspace (a monorepo subdir) or the repo root. */
-async function runChecks(dir: string): Promise<string> {
+interface CheckResult {
+  status: 'passed' | 'failed' | 'skipped'
+  report: string
+}
+
+async function runChecks(dir: string): Promise<CheckResult> {
   let scripts: Record<string, string> = {}
   try {
     scripts = JSON.parse(await fs.readFile(join(dir, 'package.json'), 'utf8')).scripts ?? {}
   } catch {
-    return 'No package.json — checks skipped.'
+    return { status: 'skipped', report: 'No package.json — checks skipped.' }
   }
   const wanted = ['typecheck', 'test'].filter((s) => scripts[s])
-  if (!wanted.length) return 'No typecheck/test scripts — checks skipped.'
+  if (!wanted.length) return { status: 'skipped', report: 'No typecheck/test scripts — checks skipped.' }
   const lines: string[] = []
+  let failed = false
   for (const s of wanted) {
     try {
       await execp(`npm run -s ${s}`, { cwd: dir, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 })
       lines.push(`- \`npm run ${s}\`: ✅ passed`)
-    } catch (e: unknown) {
+    } catch {
       lines.push(`- \`npm run ${s}\`: ❌ failed`)
+      failed = true
     }
   }
-  return lines.join('\n')
+  return { status: failed ? 'failed' : 'passed', report: lines.join('\n') }
+}
+
+/** One-line summary of a worker tool call, for the audit log in the PR body. */
+function workerToolSummary(name: string, input: Record<string, unknown>): string {
+  const s = (v: unknown): string => (typeof v === 'string' ? v : '')
+  const tail = (p: string): string => (p ? p.split('/').slice(-2).join('/') : '')
+  switch (name) {
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+      return tail(s(input.file_path))
+    case 'Glob':
+    case 'Grep':
+      return s(input.pattern)
+    case 'Bash':
+      return s(input.command).slice(0, 80)
+    default:
+      return ''
+  }
 }
 
 export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
@@ -273,6 +300,8 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `Task: ${spec.task}` }]
 
     let summary = ''
+    let hitCap = true // assume runaway until a clean stop proves otherwise
+    const toolLog: string[] = [] // an auditable trail of what the worker actually did
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const stream = client.stream({ system, messages, tools: WORKER_TOOLS })
       let text = ''
@@ -281,16 +310,20 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
       messages.push({ role: 'assistant', content: final.content })
       if (final.stopReason !== 'tool_use') {
         summary = text.trim()
+        hitCap = false
         break
       }
       const results: Anthropic.ToolResultBlockParam[] = []
       for (const block of final.content) {
         if (block.type !== 'tool_use') continue
+        const input = block.input as Record<string, unknown>
+        const arg = workerToolSummary(block.name, input)
         try {
           // Tools operate at the repo root so the worker can reach shared code; the prompt
           // keeps it focused on the workspace.
-          const out = await executeWorkerTool(block.name, block.input as Record<string, unknown>, worktree)
+          const out = await executeWorkerTool(block.name, input, worktree)
           results.push({ type: 'tool_result', tool_use_id: block.id, content: clampToolOutput(out) })
+          toolLog.push(`${block.name}${arg ? ` ${arg}` : ''}`)
         } catch (e: unknown) {
           results.push({
             type: 'tool_result',
@@ -298,6 +331,7 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
             content: `Error: ${e instanceof Error ? e.message : String(e)}`,
             is_error: true
           })
+          toolLog.push(`${block.name}${arg ? ` ${arg}` : ''} — ⚠️ error`)
         }
       }
       messages.push({ role: 'user', content: results })
@@ -307,18 +341,33 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
     const dirty = await git(worktree, 'status --porcelain')
     if (!dirty) return { ok: false, error: 'Worker made no changes — no PR opened.' }
 
-    // 4. best-effort checks — prefer the workspace's own scripts; if it has none (a monorepo
-    //    that runs checks from the root, e.g. turbo), fall back to the repo root. Non-blocking.
+    // 4. checks — prefer the workspace's own scripts; if it has none (a monorepo that runs checks
+    //    from the root, e.g. turbo), fall back to the repo root. Result GATES the PR (see below).
     let checks = await runChecks(scopedDir)
-    if (prefix && /skipped/.test(checks)) {
+    if (prefix && checks.status === 'skipped') {
       const rootChecks = await runChecks(worktree)
-      if (!/skipped/.test(rootChecks)) checks = rootChecks
+      if (rootChecks.status !== 'skipped') checks = rootChecks
     }
 
     // 5. commit + push the branch (never main)
     await git(worktree, 'add -A')
     await execp(`git commit -m ${shellQuote(title)}`, { cwd: worktree })
     await git(worktree, `push -u origin ${branch}`)
+
+    // Checks failing → open the PR as a DRAFT so it can't be merged by accident, but the work
+    // isn't thrown away (a flaky/unrelated failure shouldn't lose a good diff). The human decides.
+    const draft = checks.status === 'failed'
+    const banner =
+      checks.status === 'failed'
+        ? '> ⚠️ **Checks FAILED — opened as a draft. Review carefully before marking ready / merging.**'
+        : checks.status === 'passed'
+          ? '> ✅ **Checks passed locally.**'
+          : '> ℹ️ **No automated checks in this workspace — verify manually.**'
+
+    // An auditable trail of what the worker did, so you can trust the diff without reading every line.
+    const activity = toolLog.length
+      ? ['**What the worker did** (' + toolLog.length + ' steps):', ...toolLog.slice(-40).map((l) => `- ${l}`)].join('\n')
+      : ''
 
     // 6. open the PR via gh
     const body = [
@@ -329,22 +378,27 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
         ? formatClosesLine(spec.ticketNumber, spec.ticketRepo && spec.ticketRepo !== gh.slug ? spec.ticketRepo : undefined)
         : undefined,
       spec.ticketNumber != null ? `` : undefined,
+      banner,
+      ``,
       `**Automated by Artemis worker agent${spec.label ? ` (${spec.label})` : ''}.**`,
       ``,
       `**Task:** ${spec.task}`,
       ``,
       summary ? `**What changed:** ${summary}` : '',
+      hitCap ? `\n> ⚠️ The worker hit its ${MAX_ROUNDS}-round cap — the change may be incomplete.` : '',
       ``,
       `**Checks:**`,
-      checks,
+      checks.report,
       ``,
+      activity,
+      activity ? `` : undefined,
       `_Review before merging — opened on branch \`${branch}\`, base \`${base}\`._`
     ]
       .filter((l) => l !== undefined)
       .join('\n')
 
     const { stdout } = await execp(
-      `gh pr create --repo ${gh.slug} --head ${branch} --base ${base} --title ${shellQuote(title)} --body ${shellQuote(body)}`,
+      `gh pr create --repo ${gh.slug} --head ${branch} --base ${base}${draft ? ' --draft' : ''} --title ${shellQuote(title)} --body ${shellQuote(body)}`,
       { cwd: worktree }
     )
     const url = stdout.trim().split('\n').find((l) => l.startsWith('http')) ?? stdout.trim()
@@ -352,7 +406,14 @@ export async function runWorker(spec: WorkerSpec): Promise<WorkerResult> {
     // 7. log to the review queue
     addPrReview({ project: spec.projectName, title, url, branch, agent: spec.label ?? 'worker' })
 
-    return { ok: true, url, branch }
+    // Surface the check status + draft state in the dispatch result so the human knows immediately.
+    const note =
+      checks.status === 'failed'
+        ? ' (⚠️ checks failed — opened as a DRAFT)'
+        : checks.status === 'passed'
+          ? ' (✅ checks passed)'
+          : ''
+    return { ok: true, url, branch, note: `${note}${hitCap ? ' (⚠️ hit round cap — may be incomplete)' : ''}` || undefined }
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e), branch }
   } finally {

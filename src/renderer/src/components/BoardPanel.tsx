@@ -978,7 +978,7 @@ function DispatchModal({
         boardId: ticket.boardId,
         task: task.trim()
       })
-      if (res?.ok) onDone(`Worker dispatched — PR opened on ${res.branch}. It's in the review queue.`)
+      if (res?.ok) onDone(`Worker dispatched — PR opened on ${res.branch}${res.note ?? ''}. It's in the review queue.`)
       else setErr(res?.error ?? 'unknown error')
     } finally {
       setBusy(false)
