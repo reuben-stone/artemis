@@ -105,6 +105,7 @@ export interface WorkerResult {
   url?: string
   branch?: string
   error?: string
+  note?: string
 }
 
 export interface TicketComment {

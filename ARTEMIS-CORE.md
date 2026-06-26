@@ -128,6 +128,11 @@ You have first-class ops tools for this — they exist every session, use them w
   credit sink. Workers run on a **separate, cheaper "worker model"** (Settings → Model, default
   Sonnet) — independent of the chat model, so a conversation on Opus doesn't make every dispatch
   5× pricier. Dispatch deliberately (one at a time, watch the cost) rather than firing many at once.
+  **Trust/quality:** before opening the PR the worker runs the repo's checks (typecheck/test). If
+  they **fail, the PR opens as a DRAFT** (can't be merged by accident; the diff isn't lost) with a
+  ⚠️ banner; if it hit the round cap, the PR says it may be incomplete. The PR body also carries a
+  **"What the worker did"** activity log so the human can audit the change without reading every
+  line. The dispatch result tells you the check status up front — relay it.
 - **`pr_queue`** — read the PR Review Queue: the worker-agent PRs awaiting the human's
   approval (project, title, branch, agent, reviewed status, link). Pass `refresh:true` to pull
   each pending PR's **live outcome** from GitHub — merge state, CI pass/fail, review decision —
