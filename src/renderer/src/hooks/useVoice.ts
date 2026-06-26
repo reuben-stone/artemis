@@ -1,130 +1,100 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
+import { createVoiceClient, type VoiceBackendId, type VoiceClient } from '../voice'
 
 /**
- * Drives an amplitude ref (0..1) so the orb pulses in sync with speech, and
- * manages voice selection.
- *
- * Backend: Web Speech API `SpeechSynthesis`. It doesn't expose an audio stream,
- * so we synthesize an envelope from `onboundary` (word) events — each word kicks
- * the amplitude up, then it decays. The result reads as speech-synced pulsing.
- *
- * Swap-in path: when you wire a streaming TTS that returns audio (e.g. ElevenLabs),
- * pipe that audio through a Web Audio AnalyserNode and write its RMS into the same
- * `amplitudeRef` — the orb code doesn't change.
+ * Drives the orb amplitude ref (0..1) in sync with speech and manages voice selection, behind
+ * the swappable VoiceClient seam (src/renderer/src/voice). The `system` backend (Web Speech —
+ * incl. macOS Siri/Premium/Enhanced voices) is always created: it owns the amplitude loop + the
+ * installed-voice list, and is the graceful fallback if a not-yet-wired backend (Kokoro /
+ * ElevenLabs) is selected. The chosen backend, when not `system`, is layered on top.
  */
+const BACKEND_KEY = 'artemis.voiceBackend'
+
 export function useVoice(
   amplitudeRef: React.MutableRefObject<number>,
   onSpeakingChange?: (speaking: boolean) => void
 ) {
-  const targetRef = useRef(0)
-  const rafRef = useRef<number | null>(null)
-  const speakingRef = useRef(false)
-
   const [voices, setVoices] = useState<string[]>([])
   const [selectedVoice, setSelectedVoice] = useState<string>('')
   const selectedRef = useRef('')
   selectedRef.current = selectedVoice
+  const [voiceBackend, setVoiceBackendState] = useState<VoiceBackendId>(
+    () => (localStorage.getItem(BACKEND_KEY) as VoiceBackendId) || 'system'
+  )
 
-  // Enumerate English voices and auto-pick the best default (Siri / premium female).
+  const onSpeakingRef = useRef(onSpeakingChange)
+  onSpeakingRef.current = onSpeakingChange
+
+  // The system backend: always present (amplitude envelope + OS voice list + fallback).
+  const systemRef = useRef<VoiceClient | null>(null)
+  // The chosen backend, when it isn't `system` (Kokoro / ElevenLabs).
+  const primaryRef = useRef<VoiceClient | null>(null)
+
   useEffect(() => {
-    const synth = window.speechSynthesis
-    if (!synth) return
-    const PREFERRED = [
-      'siri', 'ava', 'samantha', 'allison', 'serena', 'zoe', 'susan',
-      'karen', 'victoria', 'moira', 'tessa', 'fiona'
-    ]
-    const score = (v: SpeechSynthesisVoice): number => {
-      const n = v.name.toLowerCase()
-      if (!v.lang.toLowerCase().startsWith('en')) return -1
-      let s = 0
-      const idx = PREFERRED.findIndex((p) => n.includes(p))
-      if (idx >= 0) s += 100 - idx * 5
-      if (/siri/.test(n)) s += 60
-      if (/premium|enhanced/.test(n)) s += 40
-      if (/female|woman/.test(n)) s += 10
-      return s
-    }
-    const refresh = () => {
-      const all = synth.getVoices().filter((v) => v.lang.toLowerCase().startsWith('en'))
-      if (!all.length) return
-      setVoices(all.map((v) => v.name))
-      // set a default only once
-      setSelectedVoice((cur) => {
-        if (cur) return cur
-        const best = all
-          .map((v) => ({ v, s: score(v) }))
-          .sort((a, b) => b.s - a.s)[0]
-        return best?.v.name ?? all[0].name
-      })
+    const env = { amplitudeRef, setSpeaking: (v: boolean) => onSpeakingRef.current?.(v) }
+    const system = createVoiceClient('system', env)
+    systemRef.current = system
+    // Populate + track the installed voices; seed a sensible default once.
+    const refresh = (): void => {
+      const list = system.getVoices()
+      if (!list.length) return
+      setVoices(list)
+      setSelectedVoice((cur) => cur || system.bestVoiceName() || list[0])
     }
     refresh()
-    synth.addEventListener('voiceschanged', refresh)
-    return () => synth.removeEventListener('voiceschanged', refresh)
-  }, [])
-
-  // Envelope loop: ease the live amplitude toward a decaying target.
-  useEffect(() => {
-    let last = performance.now()
-    const tick = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000)
-      last = now
-      if (speakingRef.current) {
-        targetRef.current *= Math.exp(-dt * 6)
-        const wobble = 0.06 * Math.sin(now * 0.02)
-        amplitudeRef.current = Math.max(0, targetRef.current + wobble * targetRef.current)
-      } else {
-        amplitudeRef.current += (0 - amplitudeRef.current) * Math.min(1, dt * 8)
-      }
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
+    const off = system.onVoicesChanged(refresh)
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      off()
+      system.dispose()
+      systemRef.current = null
     }
   }, [amplitudeRef])
 
-  const setSpeaking = useCallback(
-    (v: boolean) => {
-      speakingRef.current = v
-      onSpeakingChange?.(v)
-    },
-    [onSpeakingChange]
-  )
+  // (Re)create the chosen backend when it changes; `system` needs no separate client.
+  useEffect(() => {
+    primaryRef.current?.dispose()
+    primaryRef.current = null
+    if (voiceBackend !== 'system') {
+      const env = { amplitudeRef, setSpeaking: (v: boolean) => onSpeakingRef.current?.(v) }
+      primaryRef.current = createVoiceClient(voiceBackend, env)
+    }
+    return () => {
+      primaryRef.current?.dispose()
+      primaryRef.current = null
+    }
+  }, [voiceBackend, amplitudeRef])
 
   const cancel = useCallback(() => {
-    window.speechSynthesis?.cancel()
-    targetRef.current = 0
-    setSpeaking(false)
-  }, [setSpeaking])
+    primaryRef.current?.cancel()
+    systemRef.current?.cancel()
+  }, [])
 
-  const speak = useCallback(
-    (text: string, opts?: { voice?: string; rate?: number; pitch?: number }) => {
-      const synth = window.speechSynthesis
-      if (!synth || !text.trim()) return
-      synth.cancel()
-      const utter = new SpeechSynthesisUtterance(text)
-      utter.rate = opts?.rate ?? 0.98
-      utter.pitch = opts?.pitch ?? 1.05
-      const wanted = opts?.voice ?? selectedRef.current
-      const chosen = wanted ? synth.getVoices().find((x) => x.name === wanted) : null
-      if (chosen) utter.voice = chosen
-      utter.onstart = () => setSpeaking(true)
-      utter.onend = () => {
-        targetRef.current = 0
-        setSpeaking(false)
+  const speak = useCallback((text: string, opts?: { voice?: string; rate?: number; pitch?: number }) => {
+    if (!text.trim()) return
+    const o = { voice: opts?.voice ?? selectedRef.current, rate: opts?.rate, pitch: opts?.pitch }
+    const primary = primaryRef.current
+    if (primary) {
+      try {
+        primary.speak(text, o)
+        return
+      } catch (e) {
+        // Not-yet-wired backend (stub throws) — fall back to system so voice never silently breaks.
+        console.warn('[voice] backend fell back to system:', e instanceof Error ? e.message : e)
       }
-      utter.onerror = () => setSpeaking(false)
-      utter.onboundary = (e) => {
-        const word = text.slice(e.charIndex, e.charIndex + (e.charLength || 4))
-        const len = Math.min(8, word.trim().length || 3)
-        targetRef.current = Math.min(1, 0.45 + len * 0.07)
-      }
-      synth.speak(utter)
-    },
-    [setSpeaking]
-  )
+    }
+    systemRef.current?.speak(text, o)
+  }, [])
 
   const setVoice = useCallback((name: string) => setSelectedVoice(name), [])
+
+  const setVoiceBackend = useCallback((id: VoiceBackendId) => {
+    setVoiceBackendState(id)
+    try {
+      localStorage.setItem(BACKEND_KEY, id)
+    } catch {
+      /* private mode — non-fatal */
+    }
+  }, [])
 
   // preview the chosen voice when switching
   const previewVoice = useCallback(
@@ -132,5 +102,5 @@ export function useVoice(
     [speak]
   )
 
-  return { speak, cancel, voices, selectedVoice, setVoice, previewVoice }
+  return { speak, cancel, voices, selectedVoice, setVoice, previewVoice, voiceBackend, setVoiceBackend }
 }

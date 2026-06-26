@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { X, CircleCheck, Circle, Plus, Loader2, Cloud, HardDrive, RefreshCw } from 'lucide-react'
 import type { Project, ConnectionsStatus, GaProp, BoardConfig } from '../../../preload'
 import { ACCENTS, applyAccent, currentAccentId } from '../theme'
+import { VOICE_BACKENDS } from '../voice'
 
 type Tab = 'model' | 'voice' | 'connections' | 'general'
 
@@ -57,6 +58,8 @@ export function SettingsModal(props: {
   selectedVoice: string
   onSetVoice: (v: string) => void
   onPreviewVoice: (v: string) => void
+  voiceBackend: string
+  onSetVoiceBackend: (id: 'system' | 'kokoro' | 'elevenlabs') => void
   // General
   autoLaunch: boolean
   onToggleAutoLaunch: () => void
@@ -226,31 +229,62 @@ function VoiceTab(p: {
   selectedVoice: string
   onSetVoice: (v: string) => void
   onPreviewVoice: (v: string) => void
+  voiceBackend: string
+  onSetVoiceBackend: (id: 'system' | 'kokoro' | 'elevenlabs') => void
 }): JSX.Element {
   return (
     <section className="conn-section" style={{ borderBottom: 'none' }}>
+      {/* TTS engine — System is wired; Kokoro (local neural) + ElevenLabs (cloud) are the seam. */}
       <div className="set-field">
-        <span className="set-label">Voice</span>
-        <select
-          className="voice-select"
-          style={{ maxWidth: 240 }}
-          value={p.selectedVoice}
-          onChange={(e) => {
-            p.onSetVoice(e.target.value)
-            p.onPreviewVoice(e.target.value)
-          }}
-        >
-          {p.voices.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
+        <span className="set-label">Engine</span>
+        <div className="seg">
+          {VOICE_BACKENDS.map((b) => (
+            <button
+              key={b.id}
+              className={p.voiceBackend === b.id ? 'on' : ''}
+              disabled={!b.live}
+              title={b.live ? `Use ${b.label}` : `${b.label} — planned, not available yet`}
+              onClick={() => b.live && p.onSetVoiceBackend(b.id)}
+            >
+              {b.label}
+              {!b.live && <span style={{ opacity: 0.6, marginLeft: 5, fontSize: 9 }}>soon</span>}
+            </button>
           ))}
-        </select>
+        </div>
       </div>
       <div className="conn-detail" style={{ marginLeft: 0 }}>
-        The voice Artemis speaks in. Toggle voice on/off from the speaker icon by the chat
-        input. (Streaming neural TTS is a later upgrade.)
+        <strong>System</strong> uses your OS voices (on-device, free — incl. macOS Siri / Premium /
+        Enhanced). <strong>Kokoro</strong> (local neural) and <strong>ElevenLabs</strong> (cloud) are
+        wired behind a seam and arrive later; selecting them falls back to System for now.
       </div>
+
+      {p.voiceBackend === 'system' && (
+        <>
+          <div className="set-field" style={{ marginTop: 16 }}>
+            <span className="set-label">Voice</span>
+            <select
+              className="voice-select"
+              style={{ maxWidth: 240 }}
+              value={p.selectedVoice}
+              onChange={(e) => {
+                p.onSetVoice(e.target.value)
+                p.onPreviewVoice(e.target.value)
+              }}
+            >
+              {p.voices.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="conn-detail" style={{ marginLeft: 0 }}>
+            The voice Artemis speaks in. On macOS, download <strong>Enhanced/Premium</strong> voices in
+            System Settings → Accessibility → Spoken Content for a much more natural voice. Toggle voice
+            on/off from the speaker icon by the chat input.
+          </div>
+        </>
+      )}
     </section>
   )
 }
