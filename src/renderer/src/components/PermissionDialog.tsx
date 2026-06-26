@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { PermissionDecision } from '../../../preload'
 
 export interface PermissionReq {
@@ -30,6 +31,22 @@ export default function PermissionDialog({
   // "Allow & don't ask again" remembers an exact command, so it only makes sense for
   // Bash (Write/Edit differ every call — there's nothing stable to remember).
   const canRemember = req.toolName === 'Bash'
+
+  // Enter approves (once), Escape denies — captured at the window so it works even if
+  // focus drifted off the Allow button. Re-bound per request so a new prompt is fresh.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        onRespond('once')
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        onRespond('deny')
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [req.permId, onRespond])
   return (
     <div className="modal-backdrop">
       <div className="modal">

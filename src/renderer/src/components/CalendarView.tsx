@@ -26,19 +26,23 @@ function prettyDay(s: string): string {
 type Draft = { id?: number; day: string; title: string; starts: string; ends: string; notes: string }
 
 export function CalendarView({
+  initialDay,
+  refreshSignal,
   onChanged,
   onClose
 }: {
+  initialDay?: string | null // open focused on this day (e.g. from show_panel calendar day:…)
+  refreshSignal?: number // bumps when a turn settles → refetch so agent edits show live
   onChanged: () => void
   onClose: () => void
 }): JSX.Element {
   const today = ymd(new Date())
   const [tab, setTab] = useState<'month' | 'agenda'>('month')
   const [cursor, setCursor] = useState(() => {
-    const d = new Date()
+    const d = initialDay ? parseYmd(initialDay) : new Date()
     return { y: d.getFullYear(), m: d.getMonth() }
   })
-  const [selected, setSelected] = useState(today)
+  const [selected, setSelected] = useState(initialDay || today)
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
 
@@ -59,6 +63,12 @@ export function CalendarView({
   useEffect(() => {
     void load()
   }, [load])
+  // Live refresh: when a turn settles (refreshSignal bumps), re-pull so events Artemis just
+  // added/moved/removed appear in an already-open calendar — the "act-then-show" loop.
+  useEffect(() => {
+    if (refreshSignal !== undefined) void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal])
 
   const byDay = useMemo(() => {
     const m: Record<string, CalendarEvent[]> = {}

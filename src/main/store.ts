@@ -112,7 +112,11 @@ function getDb(): DbLike {
       branch TEXT,
       agent TEXT,
       reviewed INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      state TEXT,                  -- live PR state: open | merged | closed (null = not synced)
+      checks TEXT,                 -- CI rollup: success | failure | pending | none
+      review_decision TEXT,        -- approved | changes_requested | review_required | none
+      outcome_synced_at INTEGER    -- when the outcome was last pulled from GitHub (ms)
     );
 
     -- A lightweight ticket system, day-scoped. Beyond a checkbox: status workflow,
@@ -149,6 +153,33 @@ function getDb(): DbLike {
     );
     CREATE INDEX IF NOT EXISTS idx_events_day ON events(day);
 
+    -- A read-mostly local cache of GitHub Projects (v2) board items — the ingest half
+    -- of the ticket operator loop. DISTINCT from the personal todos layer (the two-tier
+    -- task model never collapses; see ROADMAP-TO-JARVIS.md "The north star"). GitHub stays
+    -- the source of truth: a sync is a full-replace per board, never a merge, so a moved or
+    -- closed item cannot ghost here. De-duped on (board_id, item_id) — the stable v2 identity.
+    CREATE TABLE IF NOT EXISTS project_tickets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,                    -- registry project this board maps to
+      repo TEXT,                                -- owner/repo slug of the item's issue
+      board_id TEXT NOT NULL,                   -- projectV2 node id (the board)
+      board_title TEXT,                         -- the board's GitHub name (e.g. "Lumi") for display
+      item_id TEXT NOT NULL,                    -- projectV2 item node id (for status mutations)
+      issue_number INTEGER,                     -- the issue/PR number (null for draft items)
+      content_id TEXT,                          -- issue node id (for linking / future mutations)
+      title TEXT NOT NULL,
+      status TEXT,                              -- single-select "Status" column value
+      assignees TEXT,                           -- comma-separated logins
+      labels TEXT,                              -- comma-separated label names
+      url TEXT,                                 -- html_url of the issue
+      updated_at INTEGER,                       -- the item's GitHub updatedAt (ms)
+      synced_at INTEGER NOT NULL,               -- when Artemis last cached this row (ms)
+      comments TEXT,                            -- JSON of recent comments [{author,body,at}] for notifications
+      last_comment_at INTEGER,                  -- ms of the most recent comment (quick unread check)
+      UNIQUE(board_id, item_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tickets_project ON project_tickets(project);
+
     -- Commands the user blessed with "Allow & don't ask again", scoped to a project
     -- path ('' = everywhere). The permission gate consults this before prompting.
     CREATE TABLE IF NOT EXISTS allowed_commands (
@@ -159,7 +190,24 @@ function getDb(): DbLike {
       UNIQUE(project, command)
     );
   `)
+  // Migrations for DBs created before a column existed (CREATE TABLE IF NOT EXISTS won't
+  // add columns to a pre-existing table). Each is a no-op once the column is present.
+  addColumnIfMissing(db, 'pr_reviews', 'state', 'TEXT')
+  addColumnIfMissing(db, 'pr_reviews', 'checks', 'TEXT')
+  addColumnIfMissing(db, 'pr_reviews', 'review_decision', 'TEXT')
+  addColumnIfMissing(db, 'pr_reviews', 'outcome_synced_at', 'INTEGER')
+  addColumnIfMissing(db, 'project_tickets', 'board_title', 'TEXT')
+  addColumnIfMissing(db, 'project_tickets', 'comments', 'TEXT')
+  addColumnIfMissing(db, 'project_tickets', 'last_comment_at', 'INTEGER')
   return db
+}
+
+/** Idempotent column add — guards against re-applying on a DB that already has it. */
+function addColumnIfMissing(d: DbLike, table: string, column: string, decl: string): void {
+  const cols = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  if (!cols.some((c) => c.name === column)) {
+    d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`)
+  }
 }
 
 // --- key/value meta ----------------------------------------------------------
@@ -395,6 +443,54 @@ export function setProjectGaProps(path: string, props: GaProp[]): void {
   setMeta(`ga_props:${path}`, JSON.stringify(clean))
 }
 
+// Per-project GitHub Projects (v2) board config (meta-keyed by path, mirroring GA props).
+// A project maps to a LIST of boards — a monorepo holds several (e.g. Lumi + LumiLens), each
+// optionally scoped to a subdir for focused worker dispatch. Status field/option ids are
+// discovered and cached per board so we don't re-query GraphQL for every status mutation.
+/** Which platform a board lives on. Today only GitHub Projects is implemented; the field is
+ *  the forward-compat seam so a board can later come from Jira or Azure DevOps Boards without
+ *  reshaping the cache/tools/UI (which already speak neutral nouns). Absent = 'github'. */
+export type BoardProviderId = 'github' | 'jira' | 'azure'
+
+export interface BoardConfig {
+  provider?: BoardProviderId // source platform — absent means 'github' (the only one wired today)
+  owner: string // org or user login that owns the board
+  ownerType: 'org' | 'user'
+  number: number // the projectV2 number (from its URL)
+  subdir?: string // monorepo workspace this board's work focuses on (e.g. "apps/scanner")
+  boardId?: string // projectV2 node id (cached after first fetch)
+  title?: string // board title (cached after first fetch)
+  statusFieldId?: string // single-select "Status" field id (cached on first status write)
+  statusOptions?: Array<{ id: string; name: string }> // its options (cached on first status write)
+}
+
+/** All boards mapped to a project. Migrates the old single-board value to a one-element list. */
+export function getProjectBoards(path: string): BoardConfig[] {
+  const raw = getMeta(`gh_project:${path}`)
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) return parsed as BoardConfig[]
+    return parsed && (parsed as BoardConfig).number ? [parsed as BoardConfig] : [] // legacy single
+  } catch {
+    return []
+  }
+}
+
+export function setProjectBoards(path: string, boards: BoardConfig[]): void {
+  setMeta(`gh_project:${path}`, JSON.stringify(boards))
+}
+
+/** Replace one board in a project's list (matched by projectV2 number) — e.g. to cache its
+ *  discovered boardId / title / status field ids without disturbing the others. */
+export function updateProjectBoard(path: string, board: BoardConfig): void {
+  const boards = getProjectBoards(path)
+  const i = boards.findIndex((b) => b.number === board.number && b.owner === board.owner)
+  if (i >= 0) boards[i] = board
+  else boards.push(board)
+  setProjectBoards(path, boards)
+}
+
 export function getActiveProject(): Project | null {
   const path = getActiveProjectPath()
   return (
@@ -415,6 +511,12 @@ export interface PrReview {
   agent: string | null
   reviewed: boolean
   created_at: number
+  // Live outcome, pulled from GitHub on demand (null until first synced) — lets Artemis
+  // see the fate of PRs it opened instead of firing and forgetting.
+  state: string | null // open | merged | closed
+  checks: string | null // success | failure | pending | none
+  reviewDecision: string | null // approved | changes_requested | review_required | none
+  outcomeSyncedAt: number | null
 }
 
 /** Log a PR a worker agent opened, for the human to review later. */
@@ -450,7 +552,11 @@ export function listPrReviews(): PrReview[] {
     branch: (row.branch as string) ?? null,
     agent: (row.agent as string) ?? null,
     reviewed: !!row.reviewed,
-    created_at: row.created_at as number
+    created_at: row.created_at as number,
+    state: (row.state as string) ?? null,
+    checks: (row.checks as string) ?? null,
+    reviewDecision: (row.review_decision as string) ?? null,
+    outcomeSyncedAt: (row.outcome_synced_at as number) ?? null
   }))
 }
 
@@ -458,9 +564,227 @@ export function setPrReviewed(id: number, reviewed: boolean): void {
   getDb().prepare('UPDATE pr_reviews SET reviewed = ? WHERE id = ?').run(reviewed ? 1 : 0, id)
 }
 
+/** Record the live outcome of a PR (state, CI checks, review decision) pulled from GitHub. */
+export function updatePrOutcome(
+  id: number,
+  outcome: { state?: string | null; checks?: string | null; reviewDecision?: string | null }
+): void {
+  getDb()
+    .prepare(
+      'UPDATE pr_reviews SET state = ?, checks = ?, review_decision = ?, outcome_synced_at = ? WHERE id = ?'
+    )
+    .run(outcome.state ?? null, outcome.checks ?? null, outcome.reviewDecision ?? null, Date.now(), id)
+}
+
 /** Drop reviewed rows (a "clear done" action for the queue). */
 export function clearReviewedPrs(): void {
   getDb().prepare('DELETE FROM pr_reviews WHERE reviewed = 1').run()
+}
+
+// --- project tickets (GitHub Projects v2 board cache) -------------------------
+//
+// The local projection of the cross-repo ticket board. Read-mostly: GitHub is the
+// source of truth, so a sync is a full-replace per board (replaceTicketsForProject),
+// never a merge — a moved/closed item drops out instead of ghosting. Distinct from the
+// personal `todos` layer above. See ROADMAP-TO-JARVIS.md "The north star".
+
+export interface ProjectTicket {
+  id: number
+  project: string // registry project this board maps to (for grouping/dispatch)
+  repo: string | null // owner/repo slug of the item's issue
+  boardId: string // projectV2 node id
+  boardTitle: string | null // the board's GitHub name (e.g. "Lumi"), for display
+  itemId: string // projectV2 item node id (for status mutations)
+  issueNumber: number | null
+  contentId: string | null // issue node id (for linking / future mutations)
+  title: string
+  status: string | null // single-select "Status" column value
+  assignees: string | null // comma-separated logins
+  labels: string | null // comma-separated label names
+  url: string | null
+  updatedAt: number | null // the item's GitHub updatedAt (ms)
+  syncedAt: number // when Artemis last cached this row (ms)
+}
+
+function rowToTicket(r: Record<string, unknown>): ProjectTicket {
+  return {
+    id: r.id as number,
+    project: r.project as string,
+    repo: (r.repo as string) ?? null,
+    boardId: r.board_id as string,
+    boardTitle: (r.board_title as string) ?? null,
+    itemId: r.item_id as string,
+    issueNumber: (r.issue_number as number) ?? null,
+    contentId: (r.content_id as string) ?? null,
+    title: r.title as string,
+    status: (r.status as string) ?? null,
+    assignees: (r.assignees as string) ?? null,
+    labels: (r.labels as string) ?? null,
+    url: (r.url as string) ?? null,
+    updatedAt: (r.updated_at as number) ?? null,
+    syncedAt: r.synced_at as number
+  }
+}
+
+// Newest activity first; callers (the agent tool, the board UI) group by status column.
+const TICKET_ORDER = 'ORDER BY (updated_at IS NULL) ASC, updated_at DESC, id ASC'
+
+export function listAllTickets(): ProjectTicket[] {
+  return (
+    getDb().prepare(`SELECT * FROM project_tickets ${TICKET_ORDER}`).all() as Array<Record<string, unknown>>
+  ).map(rowToTicket)
+}
+
+export function listTicketsByProject(project: string): ProjectTicket[] {
+  return (
+    getDb()
+      .prepare(`SELECT * FROM project_tickets WHERE project = ? ${TICKET_ORDER}`)
+      .all(project) as Array<Record<string, unknown>>
+  ).map(rowToTicket)
+}
+
+export interface TicketUpsert {
+  project: string
+  repo?: string | null
+  boardId: string
+  boardTitle?: string | null
+  itemId: string
+  issueNumber?: number | null
+  contentId?: string | null
+  title: string
+  status?: string | null
+  assignees?: string | null
+  labels?: string | null
+  url?: string | null
+  updatedAt?: number | null
+  comments?: string | null // JSON [{author,body,at}] of recent comments (for notifications)
+  lastCommentAt?: number | null
+}
+
+/** Insert or update a cached ticket, keyed on its stable (board_id, item_id) identity. */
+export function upsertTicket(t: TicketUpsert): ProjectTicket {
+  const db = getDb()
+  db.prepare(
+    `INSERT INTO project_tickets
+       (project, repo, board_id, board_title, item_id, issue_number, content_id, title, status, assignees, labels, url, updated_at, synced_at, comments, last_comment_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(board_id, item_id) DO UPDATE SET
+       project=excluded.project, repo=excluded.repo, board_title=excluded.board_title,
+       issue_number=excluded.issue_number, content_id=excluded.content_id, title=excluded.title,
+       status=excluded.status, assignees=excluded.assignees, labels=excluded.labels, url=excluded.url,
+       updated_at=excluded.updated_at, synced_at=excluded.synced_at,
+       comments=excluded.comments, last_comment_at=excluded.last_comment_at`
+  ).run(
+    t.project,
+    t.repo ?? null,
+    t.boardId,
+    t.boardTitle ?? null,
+    t.itemId,
+    t.issueNumber ?? null,
+    t.contentId ?? null,
+    t.title,
+    t.status ?? null,
+    t.assignees ?? null,
+    t.labels ?? null,
+    t.url ?? null,
+    t.updatedAt ?? null,
+    Date.now(),
+    t.comments ?? null,
+    t.lastCommentAt ?? null
+  )
+  return rowToTicket(
+    db
+      .prepare('SELECT * FROM project_tickets WHERE board_id = ? AND item_id = ?')
+      .get(t.boardId, t.itemId) as Record<string, unknown>
+  )
+}
+
+/** Replace ALL cached tickets for a project with a fresh board sweep. GitHub is the
+ *  source of truth, so deletions/moves on the board must drop stale local rows (no merge). */
+export function replaceTicketsForProject(project: string, tickets: Omit<TicketUpsert, 'project'>[]): void {
+  const db = getDb()
+  db.prepare('DELETE FROM project_tickets WHERE project = ?').run(project)
+  for (const t of tickets) upsertTicket({ ...t, project })
+}
+
+export function clearTicketsForProject(project: string): void {
+  getDb().prepare('DELETE FROM project_tickets WHERE project = ?').run(project)
+}
+
+// --- ticket comment notifications (new comments on watched boards) ------------
+//
+// Comments ride the board sync (cached as JSON on each ticket). "New" = a comment newer than
+// a per-project "seen" watermark, by someone other than you. v1 is on-sync; the background/
+// while-away version (v2) waits on the sidecar. See ROADMAP-TO-JARVIS.md Phase 6.
+
+/** The GitHub login Artemis authenticates as (so its own / your comments aren't "new"). */
+export function getGithubViewer(): string | null {
+  return getMeta('gh_viewer')
+}
+export function setGithubViewer(login: string): void {
+  if (login) setMeta('gh_viewer', login)
+}
+
+function commentsSeenAt(project: string): number {
+  return Number(getMeta(`comments_seen:${project}`) ?? '0')
+}
+
+export interface CommentNotification {
+  project: string
+  boardTitle: string | null
+  repo: string | null
+  issueNumber: number | null
+  ticketTitle: string
+  url: string | null
+  author: string
+  body: string
+  createdAt: number // ms
+}
+
+/** Unread comments across all cached boards: newer than the project's seen watermark and not
+ *  authored by the viewer. Newest first. */
+export function listUnreadComments(): CommentNotification[] {
+  const viewer = (getGithubViewer() ?? '').toLowerCase()
+  const rows = getDb()
+    .prepare('SELECT project, board_title, repo, issue_number, title, url, comments FROM project_tickets WHERE comments IS NOT NULL')
+    .all() as Array<Record<string, unknown>>
+  const out: CommentNotification[] = []
+  for (const r of rows) {
+    const project = r.project as string
+    const seen = commentsSeenAt(project)
+    let parsed: Array<{ author?: string; body?: string; at?: number }> = []
+    try {
+      parsed = JSON.parse((r.comments as string) || '[]')
+    } catch {
+      continue
+    }
+    for (const c of parsed) {
+      if (!c.at || c.at <= seen) continue
+      if (viewer && (c.author ?? '').toLowerCase() === viewer) continue
+      out.push({
+        project,
+        boardTitle: (r.board_title as string) ?? null,
+        repo: (r.repo as string) ?? null,
+        issueNumber: (r.issue_number as number) ?? null,
+        ticketTitle: r.title as string,
+        url: (r.url as string) ?? null,
+        author: c.author ?? 'unknown',
+        body: c.body ?? '',
+        createdAt: c.at
+      })
+    }
+  }
+  return out.sort((a, b) => b.createdAt - a.createdAt)
+}
+
+/** Mark comments read — advance the seen watermark to now (one project, or all). */
+export function markCommentsRead(project?: string): void {
+  const now = Date.now()
+  if (project) {
+    setMeta(`comments_seen:${project}`, String(now))
+    return
+  }
+  for (const p of listProjects()) setMeta(`comments_seen:${p.name}`, String(now))
 }
 
 // --- day planner: todos (a lightweight ticket system) + local calendar -------

@@ -247,9 +247,9 @@ export default function Chat({
     const ta = taRef.current
     if (!ta) return
     ta.style.height = 'auto'
-    // Keep this cap in sync with the CSS max-height (.chat-input textarea); if the
+    // Keep this cap in sync with the CSS max-height (.composer-entry textarea); if the
     // JS cap exceeds it, max-height wins and the content overflows into a scrollbar.
-    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`
   }, [draft])
 
   const submit = () => {
@@ -406,16 +406,6 @@ export default function Chat({
         )}
         {renderedMessages}
 
-        {fresh && !busy && (
-          <div className="quick-chips">
-            {QUICK_CHIPS.map((c) => (
-              <button key={c.label} className="quick-chip" onClick={() => onSend(c.prompt)}>
-                {c.label}
-              </button>
-            ))}
-          </div>
-        )}
-
         {awaiting && (
           <div className="row assistant">
             <div className="avatar"><Hexagon size={13} /></div>
@@ -442,6 +432,18 @@ export default function Chat({
         <div className="queue-badge">{queueCount} queued</div>
       )}
 
+      {/* Suggestion pills sit just above the composer — anchored to where you type, not in
+          the scroll log. Only on a fresh conversation (no user turn yet) and when idle. */}
+      {fresh && !busy && (
+        <div className="quick-chips">
+          {QUICK_CHIPS.map((c) => (
+            <button key={c.label} className="quick-chip" onClick={() => onSend(c.prompt)}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {attachments.length > 0 && (
         <div className="attachments">
           {attachments.map((a) => (
@@ -465,7 +467,7 @@ export default function Chat({
         </div>
       )}
 
-      <div className="chat-input">
+      <div className="composer">
         <input
           ref={fileInputRef}
           type="file"
@@ -477,64 +479,70 @@ export default function Chat({
             e.target.value = ''
           }}
         />
-        <button className="attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach files">
-          <Paperclip size={16} />
-        </button>
-        <button className="attach-btn" onClick={() => setShowScreenPicker(true)} title="Capture screen">
-          <Monitor size={16} />
-        </button>
-        <button
-          className={`voice-toggle ${voiceOn ? 'on' : ''}`}
-          onClick={onToggleVoice}
-          title={voiceOn ? 'Voice on' : 'Voice off'}
-        >
-          {voiceOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
-        </button>
-        {micSupported && (
+        {/* Tools live on their own strip above the field so the input gets full width
+            in the slim chat column (no more squashing). */}
+        <div className="composer-tools">
+          <button className="composer-tool" onClick={() => fileInputRef.current?.click()} title="Attach files">
+            <Paperclip size={16} />
+          </button>
+          <button className="composer-tool" onClick={() => setShowScreenPicker(true)} title="Capture screen">
+            <Monitor size={16} />
+          </button>
           <button
-            className={`mic-toggle ${listening ? 'on' : ''}`}
-            onClick={onMic}
-            title={listening ? 'Stop listening' : 'Speak to Artemis'}
+            className={`composer-tool ${voiceOn ? 'on' : ''}`}
+            onClick={onToggleVoice}
+            title={voiceOn ? 'Voice on — Artemis speaks replies' : 'Voice off'}
           >
-            {listening ? <CircleDot size={16} /> : <Mic size={16} />}
+            {voiceOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
           </button>
-        )}
-        <textarea
-          ref={taRef}
-          value={draft}
-          placeholder="Message Artemis…"
-          rows={1}
-          onChange={(e) => setDraft(e.target.value)}
-          onPaste={(e) => {
-            const files = Array.from(e.clipboardData?.items ?? [])
-              .filter((it) => it.kind === 'file')
-              .map((it) => it.getAsFile())
-              .filter((f): f is File => !!f)
-            if (files.length) {
-              e.preventDefault()
-              void addFiles(files)
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              submit()
-            }
-          }}
-        />
-        {busy && !draft.trim() ? (
-          <button className="send stop" onClick={onStop} title="Stop (Esc)">
-            <Square size={13} fill="currentColor" />
-          </button>
-        ) : (
-          <button
-            className="send"
-            onClick={submit}
-            disabled={!draft.trim() && attachments.length === 0}
-          >
-            <ArrowUp size={16} />
-          </button>
-        )}
+          {micSupported && (
+            <button
+              className={`composer-tool mic ${listening ? 'listening' : ''}`}
+              onClick={onMic}
+              title={listening ? 'Stop listening' : 'Speak to Artemis'}
+            >
+              {listening ? <CircleDot size={16} /> : <Mic size={16} />}
+            </button>
+          )}
+        </div>
+        <div className="composer-entry">
+          <textarea
+            ref={taRef}
+            value={draft}
+            placeholder="Message Artemis…"
+            rows={1}
+            onChange={(e) => setDraft(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.items ?? [])
+                .filter((it) => it.kind === 'file')
+                .map((it) => it.getAsFile())
+                .filter((f): f is File => !!f)
+              if (files.length) {
+                e.preventDefault()
+                void addFiles(files)
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                submit()
+              }
+            }}
+          />
+          {busy && !draft.trim() ? (
+            <button className="composer-send stop" onClick={onStop} title="Stop (Esc)">
+              <Square size={13} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              className="composer-send"
+              onClick={submit}
+              disabled={!draft.trim() && attachments.length === 0}
+            >
+              <ArrowUp size={16} />
+            </button>
+          )}
+        </div>
       </div>
 
       {showScreenPicker && (

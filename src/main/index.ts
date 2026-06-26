@@ -31,6 +31,8 @@ import { gatherBriefing } from './briefing'
 import { hasApiKey, setApiKey, clearApiKey } from './secrets'
 import { parseGitRemote } from './github'
 import { hasGaCredentials, setGaCredentials, clearGaCredentials } from './ga'
+import { syncBoardForProject, syncPrOutcomes, createTicket, listOwnerBoards, getTicketDetail, updateTicket, addTicketComment, editTicketComment, deleteTicketComment } from './board'
+import { runWorker } from './worker'
 import {
   appendMessage,
   loadRecentMessages,
@@ -57,12 +59,20 @@ import {
   listPrReviews,
   setPrReviewed,
   clearReviewedPrs,
+  listAllTickets,
+  listTicketsByProject,
+  getProjectBoards,
+  setProjectBoards,
+  listUnreadComments,
+  markCommentsRead,
+  type BoardConfig,
   localDay,
   listTodos,
   addTodo,
   updateTodo,
   removeTodo,
   carryOverTodos,
+  unfinishedBefore,
   listEvents,
   listEventsRange,
   addEvent,
@@ -100,6 +110,21 @@ async function gitInfo(path: string): Promise<{ remote: string | null; branch: s
   return { remote, branch, dirty }
 }
 
+// A clear registry name: a monorepo subdirectory becomes "repo/subdir" (so a workspace isn't
+// an ambiguous bare basename next to its parent); a repo root keeps its folder name.
+async function projectDisplayName(path: string): Promise<string> {
+  try {
+    const prefix = (await execp('git rev-parse --show-prefix', { cwd: path })).stdout.trim().replace(/\/$/, '')
+    if (prefix) {
+      const top = (await execp('git rev-parse --show-toplevel', { cwd: path })).stdout.trim()
+      return `${basename(top)}/${prefix}`
+    }
+  } catch {
+    /* not a git subdir */
+  }
+  return basename(path)
+}
+
 // The registry enriched with live git status + active flag, for the renderer.
 async function projectsWithStatus(): Promise<unknown[]> {
   const active = getActiveProjectPath()
@@ -112,7 +137,8 @@ async function projectsWithStatus(): Promise<unknown[]> {
         dirty,
         active: p.path === active,
         gh: parseGitRemote(p.remote),
-        gaProps: getProjectGaProps(p.path)
+        gaProps: getProjectGaProps(p.path),
+        boards: getProjectBoards(p.path)
       }
     })
   )
@@ -403,7 +429,7 @@ ipcMain.handle('projects:add', async (e) => {
   if (!res.canceled) {
     for (const path of res.filePaths) {
       const { remote } = await gitInfo(path)
-      addProject(basename(path), path, remote)
+      addProject(await projectDisplayName(path), path, remote)
     }
   }
   return projectsWithStatus()
@@ -463,6 +489,17 @@ ipcMain.handle('connections:clearGaCredentials', async () => {
   return { configured: false }
 })
 
+// Does the gh token carry the Projects v2 scope? A trivial projectsV2 query fails without it,
+// so this is a reliable probe for the "needs gh auth refresh -s project" onboarding hint.
+ipcMain.handle('connections:checkProjectScope', async () => {
+  try {
+    await execp(`gh api graphql -f query='query{viewer{projectsV2(first:1){totalCount}}}'`)
+    return true
+  } catch {
+    return false
+  }
+})
+
 // --- Briefing (on-command, structured data → docked card) ---
 ipcMain.handle('briefing:data', () => gatherBriefing())
 
@@ -476,11 +513,211 @@ ipcMain.handle('prReviews:clearReviewed', () => {
   clearReviewedPrs()
   return listPrReviews()
 })
+// Pull live merge/CI/review outcomes from GitHub for every pending PR, then return the queue.
+ipcMain.handle('prReviews:sync', async () => {
+  try {
+    await syncPrOutcomes()
+  } catch {
+    /* best-effort — keep last-known outcomes */
+  }
+  return listPrReviews()
+})
+
+// --- GitHub Projects ticket board IPC (the ticket operator loop) ---
+ipcMain.handle('tickets:list', (_e, project?: string) =>
+  project ? listTicketsByProject(project) : listAllTickets()
+)
+// Which board a cached ticket belongs to (match its boardId; fall back to the project's only
+// board). Needed for status moves + dispatch scoping now that a project maps to several boards.
+function boardForTicket(projectName: string, projectPath: string, number: number, boardId?: string | null): BoardConfig | null {
+  const boards = getProjectBoards(projectPath)
+  if (!boards.length) return null
+  // Prefer the explicit boardId the caller passed (the clicked ticket knows its own board) —
+  // matching by number alone is ambiguous when a project has several boards each holding a #n.
+  if (boardId) {
+    const exact = boards.find((b) => b.boardId === boardId)
+    if (exact) return exact
+  }
+  const t = listTicketsByProject(projectName).find((x) => x.issueNumber === number)
+  return boards.find((b) => b.boardId && b.boardId === t?.boardId) ?? (boards.length === 1 ? boards[0] : null)
+}
+
+// Re-sync every board mapped to a project (or all projects that have boards) from GitHub.
+ipcMain.handle('tickets:sync', async (_e, project?: string) => {
+  const targets = listProjects().filter(
+    (p) => getProjectBoards(p.path).length > 0 && (!project || p.name === project)
+  )
+  const errors: string[] = []
+  for (const p of targets) {
+    try {
+      await syncBoardForProject(p.name, p.path)
+    } catch (e: unknown) {
+      errors.push(`${p.name}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  return { tickets: project ? listTicketsByProject(project) : listAllTickets(), errors }
+})
+ipcMain.handle(
+  'tickets:create',
+  async (_e, input: { project: string; boardNumber?: number; title: string; body?: string; status?: string }) => {
+    const match = listProjects().find((p) => p.name === input.project)
+    if (!match) return { ok: false, error: `No project named "${input.project}".` }
+    if (!match.remote) return { ok: false, error: `Project "${match.name}" has no GitHub remote.` }
+    const boards = getProjectBoards(match.path)
+    // Which board to file onto: the one chosen, else the project's only board (if exactly one).
+    const board = boards.find((b) => b.number === input.boardNumber) ?? (boards.length === 1 ? boards[0] : null)
+    try {
+      const res = await createTicket({
+        projectName: match.name,
+        projectPath: match.path,
+        remote: match.remote,
+        board,
+        title: input.title,
+        body: input.body,
+        status: input.status
+      })
+      return { ok: true, ...res }
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+)
+// Full detail for one ticket (incl. body). `repo` is the ISSUE's own repo (a board can hold
+// issues from a repo that isn't the project's), so fetch from THERE — not the project's remote.
+ipcMain.handle('tickets:detail', async (_e, input: { project: string; repo?: string | null; number: number }) => {
+  const match = listProjects().find((p) => p.name === input.project)
+  const slug = input.repo || (match ? parseGitRemote(match.remote)?.slug : null)
+  if (!slug) return { ok: false, error: 'No GitHub repo for this ticket.' }
+  try {
+    return { ok: true, detail: await getTicketDetail(slug, input.number) }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+// Update a ticket from inside Artemis (title/body/state/status). The Save click is the gate.
+ipcMain.handle(
+  'tickets:update',
+  async (
+    _e,
+    input: {
+      project: string
+      repo?: string | null // the issue's own repo
+      number: number
+      itemId?: string | null
+      boardId?: string | null // the ticket's board (disambiguates when a project has several)
+      patch: { title?: string; body?: string; state?: 'open' | 'closed'; status?: string }
+    }
+  ) => {
+    const match = listProjects().find((p) => p.name === input.project)
+    if (!match) return { ok: false, error: `No project named "${input.project}".` }
+    try {
+      await updateTicket({
+        projectName: match.name,
+        projectPath: match.path,
+        repo: input.repo || parseGitRemote(match.remote)?.slug || null,
+        board: boardForTicket(match.name, match.path, input.number, input.boardId),
+        number: input.number,
+        itemId: input.itemId,
+        patch: input.patch
+      })
+      return { ok: true, tickets: listAllTickets() }
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+)
+// Post a comment on a ticket — the Comment click is the human gate. Returns refreshed detail.
+ipcMain.handle('tickets:comment', async (_e, input: { project: string; repo?: string | null; number: number; body: string }) => {
+  const match = listProjects().find((p) => p.name === input.project)
+  const slug = input.repo || (match ? parseGitRemote(match.remote)?.slug : null)
+  if (!slug) return { ok: false, error: 'No GitHub repo for this ticket.' }
+  try {
+    return { ok: true, detail: await addTicketComment(slug, input.number, input.body) }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+// Edit one of your own comments (the Save click is the gate). Returns the refreshed thread.
+ipcMain.handle(
+  'tickets:editComment',
+  async (_e, input: { project: string; repo?: string | null; number: number; commentId: string; body: string }) => {
+    const match = listProjects().find((p) => p.name === input.project)
+    const slug = input.repo || (match ? parseGitRemote(match.remote)?.slug : null)
+    if (!slug) return { ok: false, error: 'No GitHub repo for this ticket.' }
+    try {
+      return { ok: true, detail: await editTicketComment(slug, input.number, input.commentId, input.body) }
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+)
+// Delete one of your own comments (the confirm is the gate). Returns the refreshed thread.
+ipcMain.handle(
+  'tickets:deleteComment',
+  async (_e, input: { project: string; repo?: string | null; number: number; commentId: string }) => {
+    const match = listProjects().find((p) => p.name === input.project)
+    const slug = input.repo || (match ? parseGitRemote(match.remote)?.slug : null)
+    if (!slug) return { ok: false, error: 'No GitHub repo for this ticket.' }
+    try {
+      return { ok: true, detail: await deleteTicketComment(slug, input.number, input.commentId) }
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+)
+// Dispatch a worker FROM a board ticket — the click in the board UI is the human gate.
+ipcMain.handle(
+  'tickets:dispatch',
+  async (
+    _e,
+    input: { project: string; ticketNumber?: number; ticketRepo?: string | null; ticketUrl?: string; boardId?: string | null; task: string; title?: string }
+  ) => {
+    const match = listProjects().find((p) => p.name === input.project)
+    if (!match) return { ok: false, error: `No project named "${input.project}".` }
+    // The board the ticket is on may scope the worker to a monorepo subdir (full-repo access,
+    // subdir focus). Resolve it from the ticket's board (boardId disambiguates multi-board projects).
+    const subdir = input.ticketNumber != null ? boardForTicket(match.name, match.path, input.ticketNumber, input.boardId)?.subdir : undefined
+    return runWorker({
+      projectName: match.name,
+      projectPath: match.path,
+      remote: match.remote,
+      task: input.task,
+      title: input.title,
+      label: 'worker',
+      ticketNumber: input.ticketNumber,
+      ticketRepo: input.ticketRepo,
+      ticketUrl: input.ticketUrl,
+      subdir
+    })
+  }
+)
+// Ticket-comment notifications — new comments on watched boards (cached during board sync).
+ipcMain.handle('notifications:list', () => listUnreadComments())
+ipcMain.handle('notifications:markRead', (_e, project?: string) => {
+  markCommentsRead(project)
+  return listUnreadComments()
+})
+// List an owner's Projects v2 boards for the no-guesswork picker (also reports org vs user).
+ipcMain.handle('board:listBoards', async (_e, owner: string) => {
+  try {
+    return { ok: true, ...(await listOwnerBoards(owner)) }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+// Per-project board list (each: owner / org|user / number / subdir), edited in Settings → Connections.
+ipcMain.handle('board:getBoards', (_e, path: string) => getProjectBoards(path))
+ipcMain.handle('board:setBoards', (_e, { path, boards }: { path: string; boards: BoardConfig[] }) => {
+  setProjectBoards(path, boards)
+  return projectsWithStatus()
+})
 
 // --- Day planner IPC: todos (ticket system) + local calendar ---
 // The renderer rail reads/writes here; Artemis writes the same tables via its tools,
 // so both stay in sync against one SQLite source of truth.
 ipcMain.handle('tasks:list', (_e, day?: string) => listTodos(day || localDay()))
+// Unfinished tasks parked on days BEFORE `day` (carry-over candidates) — for the Tasks modal.
+ipcMain.handle('tasks:listBefore', (_e, day?: string) => unfinishedBefore(day || localDay()))
 ipcMain.handle('tasks:add', (_e, input: { day?: string; text: string; priority?: string; project?: string }) =>
   addTodo({ day: input.day || localDay(), text: input.text, priority: input.priority, project: input.project })
 )

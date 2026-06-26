@@ -41,7 +41,15 @@ import {
   allowCommand,
   isCommandAllowed,
   listAllowedCommands,
-  clearAllowedCommands
+  clearAllowedCommands,
+  upsertTicket,
+  listAllTickets,
+  listTicketsByProject,
+  replaceTicketsForProject,
+  clearTicketsForProject,
+  getProjectBoards,
+  setProjectBoards,
+  updateProjectBoard
 } from '../src/main/store'
 
 /**
@@ -230,6 +238,77 @@ describe('local calendar', () => {
 
     removeEvent(e.id)
     expect(listEvents('2026-06-25')).toEqual([])
+  })
+})
+
+describe('project tickets (GitHub Projects v2 board cache)', () => {
+  const base = {
+    boardId: 'PVT_1',
+    boardTitle: 'Lumi',
+    repo: 'livana/scanner',
+    issueNumber: 42,
+    contentId: 'I_42',
+    title: 'Fix flaky test',
+    status: 'Todo',
+    assignees: 'reuben',
+    labels: 'bug',
+    url: 'http://x/42',
+    updatedAt: 1000
+  }
+
+  it('upserts idempotently on (board_id, item_id) and updates fields in place', () => {
+    upsertTicket({ ...base, project: 'scanner', itemId: 'ITEM_A' })
+    upsertTicket({ ...base, project: 'scanner', itemId: 'ITEM_A', status: 'In Progress', title: 'Fix flaky test (wip)' })
+    const rows = listTicketsByProject('scanner')
+    expect(rows.length).toBe(1) // same identity → one row
+    expect(rows[0].status).toBe('In Progress')
+    expect(rows[0].title).toBe('Fix flaky test (wip)')
+    expect(rows[0].issueNumber).toBe(42)
+    expect(rows[0].boardTitle).toBe('Lumi') // the board's GitHub name, for the switcher
+  })
+
+  it('replaceTicketsForProject drops stale rows (full-replace, no merge)', () => {
+    replaceTicketsForProject('scanner', [
+      { ...base, itemId: 'ITEM_A' },
+      { ...base, itemId: 'ITEM_B', issueNumber: 43, title: 'B' }
+    ])
+    expect(listTicketsByProject('scanner').map((t) => t.itemId).sort()).toEqual(['ITEM_A', 'ITEM_B'])
+
+    // A fresh sweep where B was closed/moved away must remove it locally.
+    replaceTicketsForProject('scanner', [
+      { ...base, itemId: 'ITEM_A' },
+      { ...base, itemId: 'ITEM_C', issueNumber: 44, title: 'C' }
+    ])
+    expect(listTicketsByProject('scanner').map((t) => t.itemId).sort()).toEqual(['ITEM_A', 'ITEM_C'])
+  })
+
+  it('lists across projects and clears per project', () => {
+    replaceTicketsForProject('scanner', [{ ...base, itemId: 'S1', boardId: 'PVT_S' }])
+    replaceTicketsForProject('web', [{ ...base, itemId: 'W1', boardId: 'PVT_W', repo: 'livana/web' }])
+    expect(listAllTickets().length).toBe(2)
+    clearTicketsForProject('scanner')
+    expect(listAllTickets().map((t) => t.project)).toEqual(['web'])
+  })
+
+  it('round-trips a per-project board LIST, migrates a legacy single, and updates one in place', () => {
+    expect(getProjectBoards('/repos/scanner')).toEqual([])
+    setProjectBoards('/repos/scanner', [
+      { owner: 'livana', ownerType: 'org', number: 3, subdir: 'apps/scanner', title: 'Lumi' },
+      { owner: 'livana', ownerType: 'org', number: 5, subdir: 'apps/lens', title: 'LumiLens' }
+    ])
+    const boards = getProjectBoards('/repos/scanner')
+    expect(boards.length).toBe(2)
+    expect(boards[0]).toMatchObject({ number: 3, subdir: 'apps/scanner', title: 'Lumi' })
+
+    // Update one board (cache its discovered ids) without disturbing the other.
+    updateProjectBoard('/repos/scanner', { owner: 'livana', ownerType: 'org', number: 3, boardId: 'PVT_1', statusFieldId: 'F' })
+    const after = getProjectBoards('/repos/scanner')
+    expect(after.length).toBe(2)
+    expect(after.find((b) => b.number === 3)?.boardId).toBe('PVT_1')
+    expect(after.find((b) => b.number === 5)?.title).toBe('LumiLens')
+
+    setProjectBoards('/repos/scanner', [])
+    expect(getProjectBoards('/repos/scanner')).toEqual([])
   })
 })
 

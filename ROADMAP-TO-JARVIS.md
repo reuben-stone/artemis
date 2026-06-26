@@ -45,13 +45,22 @@ These map to **Multi-project foundation → sidecar brain → reach (GA + GitHub
 
 ---
 
-## The north star — the ticket operator loop
+## The north star — the ticket operator loop  ← ✅ BUILT (2026-06-25)
 
 The single feature that turns Artemis from "a clever assistant" into a **true repo
 operator**: one operator holding a **cross-repo feed of project tickets**, dispatching
 agents at them, and producing PRs that are all linked back through GitHub's own graph.
 This is the *mechanism* of the Livana ops-layer use case — it ties together pillars 1 and 3
 (multi-project oversight + worker agents) into a single loop.
+
+**Shipped (2026-06-25):** GitHub **Projects v2** board ingest via `gh api graphql` →
+`project_tickets` cache (`store.ts`) + connector (`board.ts`); `tickets_view` / `ticket_create`
+tools; **dispatch-from-ticket** linkage (worker branches `artemis/ticket-<n>`, PR body
+`Closes #<n>` → GitHub wires ticket↔PR↔board and auto-Dones on merge); **outcome awareness**
+(`pr_queue refresh` + PR card badges pull live merge/CI/review state — "close the loop I
+open"); HUD board rail card + full `BoardPanel` (status columns, per-ticket dispatch); board
+mapping + scope hint in Settings → Connections. Auth rides the existing `gh` CLI — Projects v2
+needs `gh auth refresh -s read:project,project` once. Ticket creation makes the loop bidirectional.
 
 **The loop:**
 
@@ -291,6 +300,12 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 - **Garbage collection + conflict resolution** — dedup near-identical facts, supersede stale ones, resolve contradictions instead of accumulating forever. Memory that only grows becomes noise (and cost). This is a quality *and* a billing lever.
 - **Auto-capture** — propose durable facts at the end of meaningful turns
 - **Episodic log** — summaries of past conversations, searchable
+- **Semantic recall over archived threads (retrieval tool)** — Artemis's biggest blind spot
+  today: it sees only the active thread; everything below the view floor is genuinely
+  unreadable unless hand-saved as a fact. A retrieval tool that searches the SQLite transcript
+  (over the episodic summaries + the semantic tier above) turns "what did we decide about X
+  last week?" into a real answer instead of "that's archived." This is the agent-facing read
+  path that the episodic log + semantic tier exist to feed — highest-leverage gap in the *mind*.
 - **Per-project memory** scoping
 - **Done when:** Artemis recalls the right detail unprompted weeks later — and asking
   "what did we discuss last time?" / "what were we working on yesterday?" returns a
@@ -323,6 +338,21 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
   that feeds the cross-repo board and the dispatch loop (see "The north star"). Read-mostly;
   GitHub stays the source of truth. Also covers **Google Calendar** read/write so the Phase 7
   local calendar can sync (today it's `source='local'`).
+- **Multi-provider board connectors (nice-to-have, demand-gated)** — extend the ticket board
+  beyond GitHub Projects to **Jira** and **Azure DevOps Boards**, so a project tracked on those
+  shows up in the same cross-repo board + dispatch loop. The groundwork is already laid: the
+  cache (`project_tickets`), agent tools, and UI speak provider-neutral nouns, and every board
+  carries a `provider` tag (`BoardConfig.provider`, default `'github'`). `src/main/board.ts` is
+  the GitHub **reference** connector; a new provider is a sibling module selected by that tag.
+  Per-provider specifics: **Jira** = REST v3 + JQL, OAuth/API-token auth, status changes are
+  workflow *transitions*; **Azure** = REST + WIQL, PAT auth, work-item *states*. Auth is the real
+  lift — no longer riding `gh`, so tokens go through `safeStorage` (same pattern as the Anthropic
+  key / GA JSON). The north-star PR↔ticket loop still closes when code stays on GitHub: swap the
+  GitHub-native `Closes #n` for **Jira Smart Commits** (`PROJ-123`) or **Azure Boards** mentions
+  (`AB#123`). Deliberately **do not freeze a `BoardProvider` interface until the second
+  implementation exists** — the right abstraction (transitions vs states vs field-options) only
+  becomes clear then; abstracting earlier would likely be wrong. Gate the actual build on a
+  concrete need (a project we oversee that genuinely lives on Jira/Azure).
 - **Product data connectors (read-only)** — pull from the Livana product databases (the Lumi/LumiLens **MongoDB Atlas**: reviews, subscribers, scan/usage records) for summaries and overviews. Start **read-only** behind a per-project connection config; any write capability is a separate, explicitly-gated decision. Pairs with the GA4 analytics intake to give Reuben a real "state of the products" briefing.
 - **Trust boundary for untrusted content** — the moment Artemis can *read* email/web AND *act* (send, book, run), prompt injection becomes a real attack surface ("ignore previous instructions and …" hidden in an email/page). The current `DANGEROUS` regex blocklist won't catch this. Required: treat all fetched/received content as untrusted data (never instructions), and require explicit confirmation for any *outward-effecting* action (send/post/pay/delete), separate from the existing command gate.
 - ✅ **Connections & onboarding UI + GA connector (BUILT 2026-06-24)** — titlebar ⚙ panel:
@@ -339,6 +369,17 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
   key, + per-project property IDs), and **clone-from-GitHub** (pull a Livana repo that
   isn't local yet). Pairs with building the GA connector — the GA credential picker needs
   a home, so build this alongside that work.
+- **Web search / discovery** — a `web_search` tool: query → ranked results (title, URL,
+  snippet), then either WebFetch the best hit to read it or hand back the array to choose from.
+  Today the only web window is WebFetch, which needs a URL *already in hand* — this turns the
+  web from **addressable** into **navigable** ("find me X", "what's the latest on this CVE in
+  our deps"). Needs a search backend (Brave / Tavily / SerpAPI behind a key in the Connections
+  panel — the local-first-but-cloud-when-needed pattern). *Presentation (renderer, rides on the
+  capability):* render results as native cards (title · snippet · favicon) with "open in
+  browser" / "read it for me" (WebFetch → summarise), plus a **best-effort** in-app iframe
+  preview where the site allows it — many set `X-Frame-Options`/CSP and refuse to frame
+  (Google, most news), so the card list is the robust path and the iframe is a bonus. Pairs
+  with the senses already shipped: discover → read → summarise is a natural operator move.
 - **Skill library** — reusable named procedures Artemis can invoke
 - **Web actions** beyond fetch/search — structured browsing
 - **Done when:** "Artemis, book that and email them the link" works end-to-end
@@ -357,6 +398,21 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
   survives restart. Reuben comes back in the morning, clicks through each PR, and checks it off.
   This is the human-approval surface for agent autonomy.
 - **Watchers** — monitor a repo, inbox, deploy, analytics; surface what changed
+- **Ticket-comment notifications — v2 (background).** v1 is **BUILT** (2026-06-25): new comments
+  on watched Projects boards are pulled during board sync, diffed against a per-board "seen"
+  watermark (excluding your own), surfaced in a **Notifications rail card** with inline reply +
+  mark-read, and read aloud on demand. v1 is **on-sync / on-demand** (it refreshes when you or
+  Artemis sync the boards). **v2 needs the sidecar daemon**: poll the boards in the background
+  while you're away and **surface + speak new comments unprompted** ("Kofi just replied on #11…"),
+  rather than only when you pull. Same machinery, just driven by the proactive tick instead of a
+  manual sync — so it lands with the sidecar ([[artemis-target-hardware]]).
+- **Outcome-aware follow-up (closing my own loops)** — once Artemis can *see the result of its
+  own actions* (CI status, merge/close events, review comments on PRs it dispatched — being
+  wired into the current build), proactivity gets a concrete first job: follow up unprompted.
+  "The fix I dispatched passed checks and is ready to merge." "That PR's been waiting three
+  days." "A ticket I was working slipped." This turns dispatch from fire-and-forget into a
+  watched loop, and is the most natural seed for the proactive tick — Artemis surfacing what
+  happened to *its own* work without being asked.
 - **System notifications** + "what I did while you were away" digest
 - **Done when:** Artemis tells *you* things at the right time, and overnight worker-agent PRs
   are waiting in the review queue for you to approve over coffee.
@@ -411,8 +467,18 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
 *Artemis builds Artemis.*
 
 - **Guided self-modification** — proposes, diffs, and (with approval) applies changes to its own code, then rebuilds
+- **Self-verification after self-edit (the seatbelt)** — today, when Artemis edits its own
+  source it rebuilds and *hopes*. It should close that loop: run the build, parse the result,
+  run the relevant test(s), and confirm it's still healthy before declaring done — rolling back
+  or flagging if not. Editing the ground you stand on deserves an automatic check, not a vibe.
+  Builds on the eval harness below; a prerequisite for routine self-modification.
 - **Eval loop** — small harness so mind changes can be measured, not just vibe-checked. **A minimal version should be pulled forward to ~Phase 2** (see Current sprint): every change today is verified by restarting and talking to it. A ~10-case smoke harness (does it still read / edit / remember / speak / gate correctly?) is cheap insurance that makes every later phase faster to trust — and is a prerequisite for safe self-modification, not a successor to it.
 - **Changelog memory** — remembers what it changed about itself and why
+- **Permission-pattern learning** — Artemis re-asks for spirit-identical commands constantly.
+  It should *notice* recurring approvals ("you always approve this shape of command") and
+  **propose** them for the per-project allowlist — the human still says yes, but the friction
+  of re-confirming the same safe operation drops over time. A learning layer on top of the
+  existing permission gate, never a bypass of it.
 - **Done when:** "Artemis, improve your own X" is a safe, routine operation
 
 ---

@@ -18,11 +18,12 @@ import {
   CornerUpRight,
   Sparkles,
   RefreshCw,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Maximize2
 } from 'lucide-react'
 import { useOpsCards } from './OpsRail'
 import { RailCard, type RailReorder } from './RailCard'
-import type { Todo, CalendarEvent } from '../../../preload'
+import type { Todo, CalendarEvent, ProjectTicket } from '../../../preload'
 
 /**
  * The HUD left rail — an Artemis-managed cockpit living in the (mostly empty) orb pane.
@@ -43,12 +44,27 @@ const RAIL_DEFAULT = 244
 
 // The rail's cards, in default order — used by the show/hide menu and as the order seed.
 const CARDS: Array<{ key: string; label: string }> = [
+  { key: 'notifications', label: 'Notifications' },
   { key: 'prs', label: 'PR Review' },
-  { key: 'ecosystem', label: 'Ecosystem' },
-  { key: 'tickets', label: 'Tickets' },
+  { key: 'board', label: 'Tickets' },
+  { key: 'tickets', label: 'Tasks' },
   { key: 'calendar', label: 'Calendar' }
 ]
 const DEFAULT_ORDER = CARDS.map((c) => c.key)
+
+// Two semantic clusters so the rail reads as "the work" vs "my day" instead of a flat pile.
+// Cards reorder freely WITHIN their group; a card always renders under its own group.
+const CARD_GROUP: Record<string, 'ops' | 'day'> = {
+  notifications: 'ops',
+  prs: 'ops',
+  board: 'ops',
+  tickets: 'day',
+  calendar: 'day'
+}
+const GROUPS: Array<{ id: 'ops' | 'day'; label: string }> = [
+  { id: 'ops', label: 'Ops' },
+  { id: 'day', label: 'My day' }
+]
 
 function loadMap(key: string): Record<string, boolean> {
   try {
@@ -76,14 +92,20 @@ export function HudRail({
   refreshSignal,
   onAsk,
   onOpenCalendar,
+  onOpenTasks,
+  onOpenNotifications,
   onOpenPrs,
-  onOpenBriefing
+  onOpenBoard,
+  onSpeak
 }: {
   refreshSignal: number
   onAsk: (prompt: string) => void
   onOpenCalendar: () => void
+  onOpenTasks: () => void
+  onOpenNotifications: () => void
   onOpenPrs: () => void
-  onOpenBriefing: () => void
+  onOpenBoard: (ticket?: ProjectTicket) => void
+  onSpeak: (text: string) => void
 }): JSX.Element {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('artemis.hud.collapsed') === '1')
   // User-adjustable rail width (drag the right edge). Clamped, persisted.
@@ -222,7 +244,9 @@ export function HudRail({
   const ops = useOpsCards({
     refreshSignal,
     onOpenPrs,
-    onOpenBriefing,
+    onOpenBoard,
+    onOpenNotifications,
+    onSpeak,
     collapsed: collapsedCards,
     hidden: hiddenCards,
     onToggleCollapse: toggleCollapse,
@@ -232,18 +256,23 @@ export function HudRail({
   const ticketsNode = (
     <RailCard
       icon={<ListTodo size={13} />}
-      title={`Tickets${open.length ? ` · ${open.length}` : ''}`}
+      title={`Tasks${open.length ? ` · ${open.length}` : ''}`}
       collapsed={!!collapsedCards.tickets}
       onToggleCollapse={() => toggleCollapse('tickets')}
       reorder={reorderProps('tickets')}
       actions={
-        <button className="hud-mini" onClick={carryOver} title="Carry unfinished tasks from earlier days into today">
-          <CornerUpRight size={13} />
-        </button>
+        <>
+          <button className="hud-mini" onClick={carryOver} title="Carry unfinished tasks from earlier days into today">
+            <CornerUpRight size={13} />
+          </button>
+          <button className="hud-mini" onClick={onOpenTasks} title="Open the full tasks view">
+            <Maximize2 size={13} />
+          </button>
+        </>
       }
     >
       <div className="hud-list">
-        {todos.length === 0 && <div className="hud-empty">Nothing yet — add a ticket below.</div>}
+        {todos.length === 0 && <div className="hud-empty">Nothing yet — add a task below.</div>}
         {[...todos]
           .sort((a, b) => {
             if ((a.status === 'done') !== (b.status === 'done')) return a.status === 'done' ? 1 : -1
@@ -280,7 +309,7 @@ export function HudRail({
           onKeyDown={(e) => {
             if (e.key === 'Enter') void add()
           }}
-          placeholder="Add a ticket…"
+          placeholder="Add a task…"
         />
         <button onClick={() => void add()} disabled={!draft.trim()} title="Add">
           <Plus size={14} />
@@ -315,28 +344,31 @@ export function HudRail({
   )
 
   const cardNodes: Record<string, ReactNode> = {
+    notifications: ops.notifications,
     prs: ops.prs,
-    ecosystem: ops.ecosystem,
+    board: ops.board,
     tickets: ticketsNode,
     calendar: calendarNode
   }
 
   if (collapsed) {
+    const expand = (): void => {
+      setCollapsed(false)
+      localStorage.setItem('artemis.hud.collapsed', '0')
+    }
     return (
       <div className="hud-rail collapsed">
-        <button
-          className="hud-expand"
-          onClick={() => {
-            setCollapsed(false)
-            localStorage.setItem('artemis.hud.collapsed', '0')
-          }}
-          title="Show HUD"
-        >
+        <button className="hud-expand" onClick={expand} title="Show HUD">
           <PanelLeftOpen size={16} />
         </button>
+        {/* Glyphs are now buttons — clicking any expands the rail (they were dead before). */}
         <div className="hud-rail-glyphs">
-          <ListTodo size={16} />
-          <CalendarDays size={16} />
+          <button className="hud-glyph" onClick={expand} title="Open tasks">
+            <ListTodo size={16} />
+          </button>
+          <button className="hud-glyph" onClick={expand} title="Open calendar">
+            <CalendarDays size={16} />
+          </button>
         </div>
       </div>
     )
@@ -385,7 +417,18 @@ export function HudRail({
       </div>
 
       <div className="hud-rail-body">
-        {order.filter((k) => !hiddenCards[k]).map((k) => <Fragment key={k}>{cardNodes[k]}</Fragment>)}
+        {GROUPS.map((g) => {
+          const keys = order.filter((k) => !hiddenCards[k] && CARD_GROUP[k] === g.id)
+          if (!keys.length) return null
+          return (
+            <div className="hud-group" key={g.id}>
+              <div className="hud-group-label">{g.label}</div>
+              {keys.map((k) => (
+                <Fragment key={k}>{cardNodes[k]}</Fragment>
+              ))}
+            </div>
+          )
+        })}
       </div>
     </div>
   )

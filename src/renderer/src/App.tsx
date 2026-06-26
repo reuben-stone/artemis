@@ -6,14 +6,17 @@ import PermissionDialog, { type PermissionReq } from './components/PermissionDia
 import KeySetup from './components/KeySetup'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { PrReviewQueue } from './components/PrReviewQueue'
+import { BoardPanel } from './components/BoardPanel'
 import { SettingsModal } from './components/SettingsModal'
 import { BriefingCard } from './components/BriefingCard'
 import { HudRail } from './components/HudRail'
 import { CalendarView } from './components/CalendarView'
+import { TasksView } from './components/TasksView'
+import { NotificationsView } from './components/NotificationsView'
 import { Tooltip } from './components/Tooltip'
 import { CommandPalette, type Command } from './components/CommandPalette'
-import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign, Shield, ShieldCheck, ShieldAlert } from 'lucide-react'
-import type { Project, PrReview, GaProp, BriefingData, PermissionDecision, PermissionState } from '../../preload'
+import { Hexagon, FolderGit2, ChevronDown, MessageSquarePlus, GitPullRequest, Settings, X, Sunrise, Volume2, Terminal, Cpu, DollarSign, Shield, ShieldCheck, ShieldAlert, Check } from 'lucide-react'
+import type { Project, PrReview, GaProp, BoardConfig, ProjectTicket, BriefingData, PermissionDecision, PermissionState } from '../../preload'
 import { useVoice } from './hooks/useVoice'
 import { useSpeech } from './hooks/useSpeech'
 import { NAME } from './agent/identity'
@@ -56,9 +59,14 @@ export default function App() {
   // PR Review Queue — worker-agent PRs awaiting approval.
   const [prs, setPrs] = useState<PrReview[]>([])
   const [showPrs, setShowPrs] = useState(false)
+  const [showBoard, setShowBoard] = useState(false) // full cross-repo ticket board modal
+  const [boardTicket, setBoardTicket] = useState<ProjectTicket | null>(null) // open board straight to this ticket
+  const [boardInitial, setBoardInitial] = useState<string | null>(null) // open board filtered to this board name
+  const [boardTicketNum, setBoardTicketNum] = useState<number | null>(null) // open board straight to this ticket #
   const [showSettings, setShowSettings] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false) // ⌘K command palette
   // On-command briefing, shown in a docked card in the orb area.
+  const [showPermMenu, setShowPermMenu] = useState(false) // permissions picker dropdown
   const [showBriefing, setShowBriefing] = useState(false)
   const [briefingData, setBriefingData] = useState<BriefingData | null>(null)
   const [briefingLoading, setBriefingLoading] = useState(false)
@@ -66,6 +74,10 @@ export default function App() {
   // CRUD'd tickets/events via its tools during the turn.
   const [hudRefresh, setHudRefresh] = useState(0)
   const [showCalendar, setShowCalendar] = useState(false) // full calendar modal
+  const [calendarDay, setCalendarDay] = useState<string | null>(null) // open calendar focused on this day
+  const [showTasks, setShowTasks] = useState(false) // full tasks (day-planner) modal
+  const [tasksDay, setTasksDay] = useState<string | null>(null) // open tasks focused on this day
+  const [showNotifications, setShowNotifications] = useState(false) // full notifications modal
   // Interactive permission posture: persisted mode (guarded/smart) + a session-only
   // "trusted" override. The effective state drives how many prompts you see.
   const [permMode, setPermMode] = useState<'guarded' | 'smart'>('smart')
@@ -101,7 +113,7 @@ export default function App() {
   const sendRef = useRef<(text: string) => Promise<void>>(null as any)
   // Latest agent-driven-UI handler, so the once-mounted event listener always calls the
   // current closure (which captures the current open* handlers).
-  const uiPanelRef = useRef<(ui: { panel?: string; project?: string }) => void>(() => {})
+  const uiPanelRef = useRef<(ui: { panel?: string; project?: string; board?: string; ticket?: number; day?: string; control?: string; value?: string }) => void>(() => {})
   // Tokens arrive faster than we want to re-render markdown; coalesce a burst into
   // a single paint per animation frame so the transcript streams smoothly.
   const flushRaf = useRef<number | null>(null)
@@ -213,6 +225,12 @@ export default function App() {
     if (updated) setPrs(updated)
   }, [])
 
+  // Pull live merge/CI/review outcomes from GitHub for the queue ("close the loop").
+  const syncPrs = useCallback(async () => {
+    const updated = await window.artemis?.prReviews?.sync()
+    if (updated) setPrs(updated)
+  }, [])
+
   // Refetch on open — worker agents add PRs in the main process during a turn, so the
   // renderer's cached list goes stale until we re-pull it.
   const openPrs = useCallback(async () => {
@@ -227,6 +245,25 @@ export default function App() {
     setShowProjects(true)
   }, [])
 
+  const openTasks = useCallback((day?: string | null) => {
+    setTasksDay(day ?? null)
+    setShowTasks(true)
+  }, [])
+
+  const openCalendar = useCallback((day?: string | null) => {
+    setCalendarDay(day ?? null)
+    setShowCalendar(true)
+  }, [])
+
+  const openNotifications = useCallback(() => setShowNotifications(true), [])
+
+  const openBoard = useCallback((ticket?: ProjectTicket | null, board?: string | null, ticketNumber?: number | null) => {
+    setBoardTicket(ticket ?? null)
+    setBoardInitial(board ?? null)
+    setBoardTicketNum(ticketNumber ?? null)
+    setShowBoard(true)
+  }, [])
+
   const openSettings = useCallback(async () => {
     const updated = await window.artemis?.projects?.list()
     if (updated) setProjects(updated)
@@ -235,6 +272,11 @@ export default function App() {
 
   const setGaProps = useCallback(async (path: string, props: GaProp[]) => {
     const updated = await window.artemis?.projects?.setGaProps(path, props)
+    if (updated) setProjects(updated)
+  }, [])
+
+  const setBoards = useCallback(async (path: string, boards: BoardConfig[]) => {
+    const updated = await window.artemis?.board?.setBoards(path, boards)
     if (updated) setProjects(updated)
   }, [])
 
@@ -473,22 +515,26 @@ export default function App() {
     })
   }, [])
 
-  // Cycle the posture: guarded → smart → trusted (session) → guarded. "Trusted" is
-  // session-only (auto-approves all but hard-dangerous), so it's a separate flag.
+  // The posture is PICKED explicitly (not blindly cycled) — Trusted auto-approves almost
+  // everything, so a stray click must never land there. "Trusted" is session-only.
   const effectivePerm: 'guarded' | 'smart' | 'trusted' = permTrusted ? 'trusted' : permMode
-  const cyclePermission = useCallback(async () => {
-    let next: PermissionState | undefined
-    if (effectivePerm === 'guarded') next = await window.artemis?.permissions?.setMode('smart')
-    else if (effectivePerm === 'smart') next = await window.artemis?.permissions?.setTrusted(true)
-    else {
-      await window.artemis?.permissions?.setTrusted(false)
-      next = await window.artemis?.permissions?.setMode('guarded')
-    }
-    if (next) {
-      setPermMode(next.mode)
-      setPermTrusted(next.trusted)
-    }
-  }, [effectivePerm])
+  const setPerm = useCallback(
+    async (mode: 'guarded' | 'smart' | 'trusted') => {
+      let next: PermissionState | undefined
+      if (mode === 'trusted') {
+        next = await window.artemis?.permissions?.setTrusted(true)
+      } else {
+        if (permTrusted) await window.artemis?.permissions?.setTrusted(false)
+        next = await window.artemis?.permissions?.setMode(mode)
+      }
+      if (next) {
+        setPermMode(next.mode)
+        setPermTrusted(next.trusted)
+      }
+      setShowPermMenu(false)
+    },
+    [permTrusted]
+  )
 
   const onQueue = useCallback((text: string) => {
     queueRef.current.push(text)
@@ -548,16 +594,25 @@ export default function App() {
   // Agent-driven UI: open a panel / expand the rail / reflect a project switch that the
   // agent triggered via the show_panel or switch_project tool.
   const handleUi = useCallback(
-    (ui: { panel?: string; project?: string }) => {
+    (ui: { panel?: string; project?: string; board?: string; ticket?: number; day?: string }) => {
       switch (ui.panel) {
         case 'pr_queue':
           void openPrs()
+          break
+        case 'board':
+          openBoard(undefined, ui.board, ui.ticket)
+          break
+        case 'tasks':
+          openTasks(ui.day)
           break
         case 'briefing':
           openBriefing()
           break
         case 'calendar':
-          setShowCalendar(true)
+          openCalendar(ui.day)
+          break
+        case 'notifications':
+          openNotifications()
           break
         case 'projects':
           void openProjects()
@@ -572,11 +627,19 @@ export default function App() {
           window.dispatchEvent(new CustomEvent('artemis:hud', { detail: 'expand' }))
           break
       }
+      // App-control from app_control: keep the titlebar/state in sync with voice-driven changes.
+      if (ui.control === 'voice') {
+        const on = ui.value === 'on'
+        setVoiceOn(on)
+        if (!on) cancel()
+      }
+      if (ui.control === 'model' && ui.value) setModel(ui.value)
+      if (ui.control === 'backend' && ui.value) setBackend(ui.value)
       // Agent switched the active project — refresh the registry so the titlebar +
       // projects panel reflect the new active highlight.
       if (ui.project) window.artemis?.projects?.list().then((p) => p && setProjects(p))
     },
-    [openPrs, openBriefing, openProjects, openSettings]
+    [openPrs, openBoard, openTasks, openCalendar, openNotifications, openBriefing, openProjects, openSettings, cancel]
   )
   uiPanelRef.current = handleUi
 
@@ -731,13 +794,23 @@ export default function App() {
         </span>
         <div className="titlebar-right">
           {/* Left: context */}
-          <Tooltip placement="bottom" align="start" content="Switch / manage the repos Artemis oversees">
+          <Tooltip
+            placement="bottom"
+            align="start"
+            content={
+              <>
+                <div className="tip-title">Files: {activeProject?.name ?? '—'}</div>
+                <div>The repo Artemis's file tools (read / edit / run) act in by default.</div>
+                <div className="tip-hint">Awareness spans all projects — this only sets where hands-on work lands. Click to switch or manage repos.</div>
+              </>
+            }
+          >
             <button
               className={`project-switch ${activeProject && activeProject.name !== 'artemis (self)' ? 'on' : ''}`}
               onClick={() => (showProjects ? setShowProjects(false) : openProjects())}
             >
               <FolderGit2 size={13} />
-              <span className="btn-tag">PROJECT</span>
+              <span className="btn-tag">FILES</span>
               {activeProject?.name ?? '—'}
               <ChevronDown size={12} className="btn-caret" />
             </button>
@@ -750,15 +823,14 @@ export default function App() {
               <GitPullRequest size={14} /> PRs{pendingPrs > 0 ? ` (${pendingPrs})` : ''}
             </button>
           </Tooltip>
-          <Tooltip placement="bottom" content="Run / show the cross-repo ecosystem briefing">
+          <Tooltip placement="bottom" content="Ecosystem briefing — a fresh cross-repo status snapshot (git + analytics)">
             <button
-              className={`pr-queue-btn ${showBriefing ? 'on' : ''}`}
+              className="pr-queue-btn"
               onClick={() => (showBriefing ? setShowBriefing(false) : openBriefing())}
             >
-              <Sunrise size={14} /> Briefing
+              <Sunrise size={14} /> Brief
             </button>
           </Tooltip>
-
           <span className="titlebar-spacer" />
 
           {/* Right: primary action + settings + status */}
@@ -767,24 +839,38 @@ export default function App() {
               <MessageSquarePlus size={14} /> New chat
             </button>
           </Tooltip>
-          <Tooltip
-            placement="bottom"
-            align="end"
-            content={
-              <>
-                <div className={`tip-title ${effectivePerm}`}>
-                  Permissions · {effectivePerm === 'trusted' ? 'Trusted (session)' : effectivePerm}
-                </div>
-                <div>{PERM_DESC[effectivePerm]}</div>
-                <div className="tip-hint">Click to cycle: Guarded → Smart → Trusted</div>
-              </>
-            }
-          >
-            <button className={`perm-btn perm-${effectivePerm}`} onClick={() => void cyclePermission()}>
+          <div className="perm-wrap">
+            <button
+              className={`perm-btn perm-${effectivePerm}`}
+              onClick={() => setShowPermMenu((v) => !v)}
+              title="Permission posture — pick how Artemis asks before acting"
+            >
               {effectivePerm === 'guarded' ? <Shield size={14} /> : effectivePerm === 'smart' ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
               <span className="btn-tag">{effectivePerm}</span>
+              <ChevronDown size={11} className="btn-caret" />
             </button>
-          </Tooltip>
+            {showPermMenu && (
+              <>
+                <div className="menu-backdrop" onClick={() => setShowPermMenu(false)} />
+                <div className="perm-menu">
+                  {(['guarded', 'smart', 'trusted'] as const).map((m) => (
+                    <button key={m} className={`perm-menu-row ${effectivePerm === m ? 'on' : ''}`} onClick={() => void setPerm(m)}>
+                      <span className={`perm-menu-icon perm-${m}`}>
+                        {m === 'guarded' ? <Shield size={13} /> : m === 'smart' ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
+                      </span>
+                      <span className="perm-menu-text">
+                        <span className="perm-menu-name">
+                          {m === 'guarded' ? 'Guarded' : m === 'smart' ? 'Smart' : 'Trusted (session)'}
+                          {effectivePerm === m && <Check size={12} className="perm-menu-check" />}
+                        </span>
+                        <span className="perm-menu-desc">{PERM_DESC[m]}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <Tooltip placement="bottom" align="end" content="Settings — connections, model, voice, appearance">
             <button
               className="conn-btn"
@@ -795,8 +881,8 @@ export default function App() {
           </Tooltip>
 
           {/* Status */}
-          {showCost && cost > 0 && (
-            <span className="cost" title="Estimated cost this conversation (list prices)">
+          {showCost && (
+            <span className="cost" title="Estimated metered Anthropic API spend this conversation (list prices). This is the 'anthropic' backend — your Claude subscription is NOT used for turns.">
               ${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}
             </span>
           )}
@@ -809,14 +895,83 @@ export default function App() {
           <HudRail
             refreshSignal={hudRefresh}
             onAsk={(p) => void send(p)}
-            onOpenCalendar={() => setShowCalendar(true)}
+            onOpenCalendar={() => openCalendar()}
+            onOpenTasks={() => openTasks()}
+            onOpenNotifications={openNotifications}
             onOpenPrs={() => void openPrs()}
-            onOpenBriefing={openBriefing}
+            onOpenBoard={openBoard}
+            onSpeak={(t) => speak(t)}
           />
           <div className="orb-stage">
             <Orb state={state} amplitudeRef={amplitudeRef} />
-            {showBriefing && (
-              <div className="orb-dock">
+          </div>
+
+          {/* Panel modals are scoped to the orb side so the chat column stays live —
+              you can keep giving commands while a board / briefing / settings is open.
+              (Permission, ⌘K, and the undo toast stay app-global below.) */}
+          {showProjects && (
+            <ProjectsPanel
+              projects={projects}
+              busy={projectsBusy}
+              onAdd={addProjects}
+              onRemove={removeProject}
+              onSelect={selectProject}
+              onClose={() => setShowProjects(false)}
+            />
+          )}
+
+          {showCalendar && (
+            <CalendarView
+              initialDay={calendarDay}
+              refreshSignal={hudRefresh}
+              onChanged={() => setHudRefresh((n) => n + 1)}
+              onClose={() => {
+                setShowCalendar(false)
+                setCalendarDay(null)
+              }}
+            />
+          )}
+
+          {showTasks && (
+            <TasksView
+              initialDay={tasksDay}
+              refreshSignal={hudRefresh}
+              onChanged={() => setHudRefresh((n) => n + 1)}
+              onClose={() => {
+                setShowTasks(false)
+                setTasksDay(null)
+              }}
+            />
+          )}
+
+          {showNotifications && (
+            <NotificationsView
+              refreshSignal={hudRefresh}
+              onSpeak={(t) => speak(t)}
+              onChanged={() => setHudRefresh((n) => n + 1)}
+              onClose={() => setShowNotifications(false)}
+            />
+          )}
+
+          {showBoard && (
+            <BoardPanel
+              projects={projects}
+              initialTicket={boardTicket}
+              initialBoard={boardInitial}
+              initialTicketNumber={boardTicketNum}
+              onChanged={() => setHudRefresh((n) => n + 1)}
+              onClose={() => {
+                setShowBoard(false)
+                setBoardTicket(null)
+                setBoardInitial(null)
+                setBoardTicketNum(null)
+              }}
+            />
+          )}
+
+          {showBriefing && (
+            <div className="projects-overlay" onClick={() => setShowBriefing(false)}>
+              <div className="dock-modal-wrap" onClick={(e) => e.stopPropagation()}>
                 <BriefingCard
                   data={briefingData}
                   loading={briefingLoading}
@@ -824,18 +979,55 @@ export default function App() {
                   onClose={() => setShowBriefing(false)}
                 />
               </div>
-            )}
-            {showPrs && (
-              <div className="orb-dock-bottom">
+            </div>
+          )}
+
+          {showPrs && (
+            <div className="projects-overlay" onClick={() => setShowPrs(false)}>
+              <div className="dock-modal-wrap" onClick={(e) => e.stopPropagation()}>
                 <PrReviewQueue
                   prs={prs}
                   onToggle={togglePr}
                   onClearReviewed={clearReviewedPrs}
+                  onSync={syncPrs}
                   onClose={() => setShowPrs(false)}
                 />
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {showSettings && (
+            <SettingsModal
+              model={model}
+              onToggleModel={toggleModel}
+              backend={backend}
+              onToggleBackend={toggleBackend}
+              ollamaHost={ollamaHost}
+              ollamaModel={ollamaModel}
+              onSetOllama={setOllama}
+              voices={voices}
+              selectedVoice={selectedVoice}
+              onSetVoice={setVoice}
+              onPreviewVoice={previewVoice}
+              autoLaunch={autoLaunch}
+              onToggleAutoLaunch={toggleAutoLaunch}
+              showTerminal={showTerminal}
+              onToggleTerminal={toggleTerminal}
+              showCost={showCost}
+              onToggleShowCost={toggleShowCost}
+              projects={projects}
+              onSetGaProps={setGaProps}
+              onSetBoards={setBoards}
+              onAddProject={addProjects}
+              onClose={() => setShowSettings(false)}
+            />
+          )}
+
+          {/* Permission prompt is scoped to the orb side too, but above the panels —
+              it tops any open board/settings while the chat column stays readable. */}
+          {permission && (
+            <PermissionDialog req={permission} onRespond={respondPermission} />
+          )}
         </section>
         <section className="side-col">
           {showTerminal && (
@@ -874,10 +1066,6 @@ export default function App() {
         </section>
       </div>
 
-      {permission && (
-        <PermissionDialog req={permission} onRespond={respondPermission} />
-      )}
-
       {showUndo && (
         <div className="undo-toast" role="status">
           <span>Started a new conversation</span>
@@ -885,47 +1073,7 @@ export default function App() {
         </div>
       )}
 
-      {showProjects && (
-        <ProjectsPanel
-          projects={projects}
-          busy={projectsBusy}
-          onAdd={addProjects}
-          onRemove={removeProject}
-          onSelect={selectProject}
-          onClose={() => setShowProjects(false)}
-        />
-      )}
-
-      {showCalendar && (
-        <CalendarView onChanged={() => setHudRefresh((n) => n + 1)} onClose={() => setShowCalendar(false)} />
-      )}
-
       {showCmdk && <CommandPalette commands={commands} onClose={() => setShowCmdk(false)} />}
-
-      {showSettings && (
-        <SettingsModal
-          model={model}
-          onToggleModel={toggleModel}
-          backend={backend}
-          onToggleBackend={toggleBackend}
-          ollamaHost={ollamaHost}
-          ollamaModel={ollamaModel}
-          onSetOllama={setOllama}
-          voices={voices}
-          selectedVoice={selectedVoice}
-          onSetVoice={setVoice}
-          onPreviewVoice={previewVoice}
-          autoLaunch={autoLaunch}
-          onToggleAutoLaunch={toggleAutoLaunch}
-          showTerminal={showTerminal}
-          onToggleTerminal={toggleTerminal}
-          showCost={showCost}
-          onToggleShowCost={toggleShowCost}
-          projects={projects}
-          onSetGaProps={setGaProps}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
     </div>
   )
 }
