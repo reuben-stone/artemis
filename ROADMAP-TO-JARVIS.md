@@ -307,6 +307,18 @@ in Phase 6). If the shape's wrong, you learn now, not after building two whole p
   last week?" into a real answer instead of "that's archived." This is the agent-facing read
   path that the episodic log + semantic tier exist to feed — highest-leverage gap in the *mind*.
 - **Per-project memory** scoping
+- **Retrieval / RAG layer (`sqlite-vec`) — scoped, NOT a bolt-on over the live tools.** RAG
+  earns its place only for corpora **too big for context that need *semantic* (fuzzy) search**.
+  Two real targets: **(a) semantic memory** — the tier above (archived threads, memory facts,
+  episodic summaries); and **(b) cross-repo code search** — embed the ecosystem's code so "where
+  do we handle X across the 4 repos?" retrieves the right chunks (great for scoping worker
+  dispatches). It's a *retriever* (small local embedding model — nomic/bge — + a `sqlite-vec`
+  index on the existing SQLite backbone), feeding the existing model; you build no model and
+  retrieval is **free + local**. EXPLICIT BOUNDARY: do **NOT** put RAG in front of the live ops
+  tools (`tickets_view`, `ecosystem_status`, `ticket_comments`, GA, git) — that data is small,
+  structured, and fetched directly on demand; a vector layer there adds latency + infra for no
+  gain. Live structured data = direct tool-calls; big/fuzzy/historical = RAG. (Distinct from
+  "run read-tools on the local LLM", which is *model routing*, not retrieval — don't conflate.)
 - **Done when:** Artemis recalls the right detail unprompted weeks later — and asking
   "what did we discuss last time?" / "what were we working on yesterday?" returns a
   real, accurate summary of the archived thread, not "that's out of my context."
