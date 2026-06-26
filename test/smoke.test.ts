@@ -15,6 +15,7 @@ import {
 import { toOllamaMessages } from '../src/main/model/ollama'
 import { parseGitRemote } from '../src/main/github'
 import { buildBoardQuery, mapBoardResponse, formatTicketBranch, formatClosesLine, mapPrOutcome } from '../src/main/board'
+import { withinWorktree } from '../src/main/safety'
 
 /**
  * Artemis smoke harness — a fast, free, deterministic check that the core
@@ -321,6 +322,21 @@ describe('ticket operator — GitHub Projects board helpers', () => {
   it('formats the ticket branch and Closes line that wire PR↔ticket on GitHub', () => {
     expect(formatTicketBranch(42)).toBe('artemis/ticket-42')
     expect(formatClosesLine(42)).toBe('Closes #42')
+  })
+
+  it('confines worker file ops to the worktree sandbox (injection/error containment)', () => {
+    const root = '/tmp/wt'
+    // in-sandbox paths resolve fine
+    expect(withinWorktree(root, 'src/index.ts')).toBe('/tmp/wt/src/index.ts')
+    expect(withinWorktree(root, './a/b.ts')).toBe('/tmp/wt/a/b.ts')
+    // escapes are refused: absolute paths, parent traversal, and sibling-prefix tricks
+    expect(() => withinWorktree(root, '/etc/passwd')).toThrow(/escapes the worktree/)
+    expect(() => withinWorktree(root, '../other/secret')).toThrow(/escapes the worktree/)
+    expect(() => withinWorktree(root, '../../etc/shadow')).toThrow(/escapes the worktree/)
+    expect(() => withinWorktree('/tmp/wt', '/tmp/wt-evil/x')).toThrow(/escapes the worktree/) // sibling-prefix
+    expect(() => withinWorktree(root, '')).toThrow(/missing file path/)
+    // `~` is NOT shell-expanded by resolve — it's a literal segment, so it stays contained.
+    expect(withinWorktree(root, '~/.ssh/id_rsa')).toBe('/tmp/wt/~/.ssh/id_rsa')
   })
 
   it('maps PR outcome — merge state, CI rollup, review decision (close the loop)', () => {

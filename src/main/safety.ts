@@ -2,10 +2,28 @@
  * Shared safety primitives for any agent loop (main or worker) — kept dependency-free
  * so both can import them without a circular reference.
  */
+import { resolve } from 'path'
 
 // Commands we refuse to run without asking, in any context.
 export const DANGEROUS =
   /\b(rm\s+-rf?\s+[~/]|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot|>\s*\/dev\/sd)/i
+
+/**
+ * Confine a file path to a sandbox root (the worker's worktree). A worker runs autonomously
+ * (no per-action human gate) and its task can quote external content (ticket comments) — so an
+ * absolute path or `../` traversal (an error OR a prompt injection) must not read/write outside
+ * the worktree (e.g. ~/.ssh, another repo). Returns the resolved absolute path, or throws.
+ * Note: `~` is NOT shell-expanded — it's a literal segment, so it stays contained under root.
+ */
+export function withinWorktree(root: string, fp: string): string {
+  if (typeof fp !== 'string' || !fp) throw new Error('Refused: missing file path.')
+  const abs = resolve(root, fp) // relative → under root; absolute fp stays absolute (then rejected)
+  const base = resolve(root)
+  if (abs !== base && !abs.startsWith(base + '/')) {
+    throw new Error(`Refused: path escapes the worktree sandbox (${fp}).`)
+  }
+  return abs
+}
 
 // ── Safe read-only command classifier (for "Smart" permission mode) ──────────
 // Auto-approve only commands we can PROVE are read-only and un-chained. Conservative
