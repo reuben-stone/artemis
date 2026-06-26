@@ -786,12 +786,15 @@ export default function App() {
   return (
     <div className="app">
       <header className="titlebar">
-        <span
-          className="brand"
-          title="A.R.T.E.M.I.S. — Autonomous Repository-Tending Engineering, Monitoring & Intelligence System"
+        <Tooltip
+          placement="bottom"
+          align="start"
+          content="A.R.T.E.M.I.S. — Autonomous Repository-Tending Engineering, Monitoring & Intelligence System"
         >
-          <Hexagon size={14} strokeWidth={2.5} /> ARTEMIS
-        </span>
+          <span className="brand">
+            <Hexagon size={14} strokeWidth={2.5} /> ARTEMIS
+          </span>
+        </Tooltip>
         <div className="titlebar-right">
           {/* Left: context */}
           <Tooltip
@@ -840,15 +843,16 @@ export default function App() {
             </button>
           </Tooltip>
           <div className="perm-wrap">
-            <button
-              className={`perm-btn perm-${effectivePerm}`}
-              onClick={() => setShowPermMenu((v) => !v)}
-              title="Permission posture — pick how Artemis asks before acting"
-            >
-              {effectivePerm === 'guarded' ? <Shield size={14} /> : effectivePerm === 'smart' ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
-              <span className="btn-tag">{effectivePerm}</span>
-              <ChevronDown size={11} className="btn-caret" />
-            </button>
+            <Tooltip placement="bottom" content="Permission posture — pick how Artemis asks before acting">
+              <button
+                className={`perm-btn perm-${effectivePerm}`}
+                onClick={() => setShowPermMenu((v) => !v)}
+              >
+                {effectivePerm === 'guarded' ? <Shield size={14} /> : effectivePerm === 'smart' ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+                <span className="btn-tag">{effectivePerm}</span>
+                <ChevronDown size={11} className="btn-caret" />
+              </button>
+            </Tooltip>
             {showPermMenu && (
               <>
                 <div className="menu-backdrop" onClick={() => setShowPermMenu(false)} />
@@ -882,9 +886,13 @@ export default function App() {
 
           {/* Status */}
           {showCost && (
-            <span className="cost" title="Estimated metered Anthropic API spend this conversation (list prices). This is the 'anthropic' backend — your Claude subscription is NOT used for turns.">
-              ${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}
-            </span>
+            <Tooltip
+              placement="bottom"
+              align="end"
+              content="Estimated metered Anthropic API spend this conversation (list prices). This is the 'anthropic' backend — your Claude subscription is NOT used for turns."
+            >
+              <span className="cost">${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}</span>
+            </Tooltip>
           )}
           <span className={`status status-${state}`}>{state}</span>
         </div>
@@ -1061,6 +1069,8 @@ export default function App() {
               micSupported={speech.supported}
               onMic={toggleMic}
               micHint={micHint}
+              model={model}
+              onToggleModel={toggleModel}
             />
           </div>
         </section>

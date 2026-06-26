@@ -29,10 +29,12 @@ import {
   Square,
   Paperclip,
   X,
-  Monitor
+  Monitor,
+  Cpu
 } from 'lucide-react'
 import type { OrbState } from './Orb'
 import { ScreenPicker } from './ScreenPicker'
+import { Tooltip } from './Tooltip'
 
 export interface ToolStep {
   id: string
@@ -148,7 +150,9 @@ export default function Chat({
   listening,
   micSupported,
   onMic,
-  micHint
+  micHint,
+  model,
+  onToggleModel
 }: {
   messages: Message[]
   busy: boolean
@@ -163,8 +167,11 @@ export default function Chat({
   micSupported: boolean
   onMic: () => void
   micHint?: string | null
+  model?: string
+  onToggleModel?: () => void
 }) {
   const [draft, setDraft] = useState('')
+  const [histIdx, setHistIdx] = useState(-1) // prompt-history cursor (-1 = not navigating)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [showScreenPicker, setShowScreenPicker] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -252,9 +259,35 @@ export default function Chat({
     ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`
   }, [draft])
 
+  // Prompt history (terminal-style ↑/↓): the user's prior sent messages, oldest→newest.
+  const history = useMemo(() => messages.filter((m) => m.role === 'user').map((m) => m.text).filter(Boolean), [messages])
+  // ↑ recalls a previous message (only when the field is empty or already navigating, so it
+  // doesn't hijack cursor-up in a multi-line draft); ↓ walks forward, past the end clears.
+  const navHistory = (dir: 'up' | 'down'): boolean => {
+    if (dir === 'up') {
+      if (draft !== '' && histIdx < 0) return false // typing a fresh draft — let ↑ move the caret
+      if (!history.length) return false
+      const ni = histIdx < 0 ? history.length - 1 : Math.max(0, histIdx - 1)
+      setHistIdx(ni)
+      setDraft(history[ni])
+      return true
+    }
+    if (histIdx < 0) return false
+    const ni = histIdx + 1
+    if (ni >= history.length) {
+      setHistIdx(-1)
+      setDraft('')
+    } else {
+      setHistIdx(ni)
+      setDraft(history[ni])
+    }
+    return true
+  }
+
   const submit = () => {
     const text = draft.trim()
     if (!text && attachments.length === 0) return
+    setHistIdx(-1) // sending resets the history cursor
 
     // Text/code files inline into the prompt (works on any backend); images go as
     // structured attachments for the vision model.
@@ -482,28 +515,39 @@ export default function Chat({
         {/* Tools live on their own strip above the field so the input gets full width
             in the slim chat column (no more squashing). */}
         <div className="composer-tools">
-          <button className="composer-tool" onClick={() => fileInputRef.current?.click()} title="Attach files">
-            <Paperclip size={16} />
-          </button>
-          <button className="composer-tool" onClick={() => setShowScreenPicker(true)} title="Capture screen">
-            <Monitor size={16} />
-          </button>
-          <button
-            className={`composer-tool ${voiceOn ? 'on' : ''}`}
-            onClick={onToggleVoice}
-            title={voiceOn ? 'Voice on — Artemis speaks replies' : 'Voice off'}
-          >
-            {voiceOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
-          </button>
-          {micSupported && (
-            <button
-              className={`composer-tool mic ${listening ? 'listening' : ''}`}
-              onClick={onMic}
-              title={listening ? 'Stop listening' : 'Speak to Artemis'}
-            >
-              {listening ? <CircleDot size={16} /> : <Mic size={16} />}
+          {/* Voice OUTPUT (speaker) anchored far-left; voice INPUT (mic) far-right; content
+              tools (attach, screen) grouped between — "I/O at the edges". */}
+          <Tooltip placement="top" align="start" content={voiceOn ? 'Voice on — Artemis speaks replies (click to mute)' : 'Voice off — click to have replies spoken'}>
+            <button className={`composer-tool ${voiceOn ? 'on' : ''}`} onClick={onToggleVoice}>
+              {voiceOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
             </button>
-          )}
+          </Tooltip>
+          <Tooltip placement="top" content="Attach files (or drag / paste them in)">
+            <button className="composer-tool" onClick={() => fileInputRef.current?.click()}>
+              <Paperclip size={16} />
+            </button>
+          </Tooltip>
+          <Tooltip placement="top" content="Capture your screen and attach it">
+            <button className="composer-tool" onClick={() => setShowScreenPicker(true)}>
+              <Monitor size={16} />
+            </button>
+          </Tooltip>
+          <div className="composer-tools-right">
+            {model && onToggleModel && (
+              <Tooltip placement="top" align="end" content={`Model: ${model.includes('opus') ? 'Opus (max capability)' : 'Sonnet (fast default)'} — click to switch (next turn)`}>
+                <button className="composer-model" onClick={onToggleModel}>
+                  <Cpu size={13} /> {model.includes('opus') ? 'Opus' : 'Sonnet'}
+                </button>
+              </Tooltip>
+            )}
+            {micSupported && (
+              <Tooltip placement="top" align="end" content={listening ? 'Listening — click to stop' : 'Speak to Artemis'}>
+                <button className={`composer-tool mic ${listening ? 'listening' : ''}`} onClick={onMic}>
+                  {listening ? <CircleDot size={16} /> : <Mic size={16} />}
+                </button>
+              </Tooltip>
+            )}
+          </div>
         </div>
         <div className="composer-entry">
           <textarea
@@ -511,7 +555,10 @@ export default function Chat({
             value={draft}
             placeholder="Message Artemis…"
             rows={1}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              if (histIdx >= 0) setHistIdx(-1) // manual edit exits history-navigation
+            }}
             onPaste={(e) => {
               const files = Array.from(e.clipboardData?.items ?? [])
                 .filter((it) => it.kind === 'file')
@@ -526,21 +573,29 @@ export default function Chat({
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 submit()
+              } else if (e.key === 'ArrowUp') {
+                if (navHistory('up')) e.preventDefault()
+              } else if (e.key === 'ArrowDown') {
+                if (navHistory('down')) e.preventDefault()
               }
             }}
           />
           {busy && !draft.trim() ? (
-            <button className="composer-send stop" onClick={onStop} title="Stop (Esc)">
-              <Square size={13} fill="currentColor" />
-            </button>
+            <Tooltip placement="top" align="end" content="Stop (Esc)">
+              <button className="composer-send stop" onClick={onStop}>
+                <Square size={13} fill="currentColor" />
+              </button>
+            </Tooltip>
           ) : (
-            <button
-              className="composer-send"
-              onClick={submit}
-              disabled={!draft.trim() && attachments.length === 0}
-            >
-              <ArrowUp size={16} />
-            </button>
+            <Tooltip placement="top" align="end" content="Send (Enter · Shift+Enter for a new line)">
+              <button
+                className="composer-send"
+                onClick={submit}
+                disabled={!draft.trim() && attachments.length === 0}
+              >
+                <ArrowUp size={16} />
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
