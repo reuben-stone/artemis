@@ -57,7 +57,7 @@ import {
 } from './store'
 import { gaSummary, hasGaCredentials } from './ga'
 import { parseGitRemote } from './github'
-import { syncBoardForProject, syncPrOutcomes, createTicket, formatTicketBranch, addTicketComment, updateTicket } from './board'
+import { syncBoardForProject, syncPrOutcomes, createTicket, formatTicketBranch, addTicketComment, updateTicket, getTicketDetail } from './board'
 
 const execAsync = promisify(exec)
 
@@ -82,6 +82,7 @@ export const AUTO_ALLOW = new Set([
   'system_context',
   'pr_queue',
   'tickets_view',
+  'ticket_comments',
   'notifications_view',
   'tasks_view',
   'calendar_view',
@@ -482,6 +483,20 @@ const TOOLS: Anthropic.Tool[] = [
         refresh: { type: 'boolean', description: 'Re-sync the board(s) from GitHub before reporting.' }
       },
       required: []
+    }
+  },
+  {
+    name: 'ticket_comments',
+    description:
+      "Read ONE ticket's full discussion — its description AND the entire comment thread, pulled live from GitHub. tickets_view only has titles/status; this is how you get the CONTEXT teammates left in comments (often the real spec for a fix). Read this BEFORE dispatching a worker on a ticket whose details live in the comments. Identify by project + issue number (+ board if the number is ambiguous across the project's boards). Read-only.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'The project the ticket is on (as in tickets_view).' },
+        number: { type: 'number', description: 'The issue number (e.g. 7).' },
+        board: { type: 'string', description: 'Which board the ticket is on (e.g. "Lumi"). Only needed if the number is ambiguous.' }
+      },
+      required: ['project', 'number']
     }
   },
   {
@@ -1340,6 +1355,31 @@ function resolveTicketTarget(
   return { match, repo, itemId: cached?.itemId, board: boardCfg, boardTitle: cached?.boardTitle ?? boardCfg?.title ?? null }
 }
 
+/** Read a ticket's FULL discussion — description + the whole comment thread, live from GitHub.
+ *  The board cache only holds titles/status, so this is how you get the *context* a teammate left
+ *  in comments (often the real spec for a fix). Read-only. */
+async function toolTicketComments(input: { project: string; number: number; board?: string }): Promise<string> {
+  const r = resolveTicketTarget(input.project, input.number, input.board)
+  if (typeof r === 'string') return r
+  let detail: Awaited<ReturnType<typeof getTicketDetail>>
+  try {
+    detail = await getTicketDetail(r.repo!, input.number)
+  } catch (e: unknown) {
+    return `Could not read #${input.number}: ${e instanceof Error ? e.message : String(e)}`
+  }
+  const where = r.boardTitle ? ` · ${r.boardTitle} board` : ''
+  const lines: string[] = [`#${detail.number} ${detail.title} (${detail.state}${where} · ${r.repo})`]
+  const body = (detail.body ?? '').trim()
+  lines.push('', 'DESCRIPTION:', body ? body : '(no description)')
+  lines.push('', `COMMENTS (${detail.comments.length}):`)
+  if (!detail.comments.length) lines.push('  (none yet)')
+  for (const c of detail.comments) {
+    const when = c.createdAt ? ` · ${c.createdAt.slice(0, 10)}` : ''
+    lines.push('', `${c.author}${when}${c.viewerDidAuthor ? ' (you)' : ''}:`, c.body.trim() || '(empty)')
+  }
+  return lines.join('\n')
+}
+
 async function toolTicketComment(input: { project: string; number: number; body: string; board?: string }): Promise<string> {
   const r = resolveTicketTarget(input.project, input.number, input.board)
   if (typeof r === 'string') return r
@@ -1764,6 +1804,8 @@ export async function executeTool(
       return toolAppControl(input as Parameters<typeof toolAppControl>[0], ctx)
     case 'tickets_view':
       return toolTicketsView(input as Parameters<typeof toolTicketsView>[0])
+    case 'ticket_comments':
+      return toolTicketComments(input as Parameters<typeof toolTicketComments>[0])
     case 'ticket_create':
       return toolTicketCreate(input as Parameters<typeof toolTicketCreate>[0])
     case 'ticket_comment':

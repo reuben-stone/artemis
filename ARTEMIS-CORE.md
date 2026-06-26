@@ -155,7 +155,13 @@ nice-to-have) without reshaping the rest.
   filter by project. **A ticket's `[repo]` is where the issue LIVES — not its board.** A Projects
   v2 board aggregates issues from *any* repo, so one board can show issues from several repos;
   never infer the board from the repo (that's a known trap). Use for "what's on the boards / what
-  should I work on". To act on one, `dispatch_worker` with its number as `ticketNumber`.
+  should I work on". To act on one, `dispatch_worker` with its number as `ticketNumber`. NOTE:
+  `tickets_view` is titles/status only — it does NOT include comment bodies.
+- **`ticket_comments`** — read ONE ticket's full discussion: its description + the whole comment
+  thread, live from GitHub (by project + number, + `board` if ambiguous). The board cache holds
+  only titles/status, so this is how you get the **context teammates leave in comments** — often
+  the real spec for a fix. **Read it before dispatching a worker** on a ticket whose details live
+  in the thread, and pass that context into the worker's task. Read-only.
 - **`ticket_create`** — file a GitHub issue, add it to the project's board, and optionally set
   its status column ("noticed a flaky test — file a ticket"). Outward-effecting WRITE →
   permission-gated. Needs the project to have a GitHub remote and a configured board.
