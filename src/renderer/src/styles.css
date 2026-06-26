@@ -73,6 +73,9 @@ html, body, #root {
 .voice-select {
   -webkit-app-region: no-drag;
 }
+/* Tooltip wrappers in the titlebar must be no-drag, else the drag region swallows the hover
+   events (so brand/cost/perm tooltips wouldn't fire). The titlebar bg + spacer stay draggable. */
+.titlebar .tip-wrap { -webkit-app-region: no-drag; }
 /* icon alignment — lucide renders inline <svg>; flex-center any icon-bearing control */
 .brand,
 .project-switch,
@@ -1879,7 +1882,17 @@ html, body, #root {
 }
 .composer-tool:hover { color: var(--text); background: rgba(255, 255, 255, 0.07); }
 .composer-tool.on { color: #c084fc; background: rgba(168, 85, 247, 0.14); }
-.composer-tool.mic { margin-left: auto; } /* mic anchors to the right edge of the strip */
+/* Voice-input + model controls group at the right edge of the strip. */
+.composer-tools-right { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.composer-model {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 9px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
+  color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.composer-model:hover { color: var(--text); border-color: rgba(var(--accent-rgb), 0.4); }
+.composer-model svg { opacity: 0.8; }
 .composer-tool.listening {
   color: #22d3ee;
   background: #22d3ee1c;
@@ -1895,6 +1908,8 @@ html, body, #root {
   gap: 8px;
   padding: 6px 8px 8px 12px;
 }
+/* the send button is wrapped in a Tooltip (.tip-wrap) — keep it fixed-width beside the textarea */
+.composer-entry > .tip-wrap { flex: none; }
 .composer-entry textarea {
   flex: 1;
   resize: none;
@@ -2259,6 +2274,10 @@ html, body, #root {
 .board-back:hover { color: var(--accent-bright); }
 
 .board-detail { padding: 14px 16px; overflow-y: auto; max-height: 70vh; }
+.board-detail::-webkit-scrollbar { width: 8px; }
+.board-detail::-webkit-scrollbar-track { background: transparent; }
+.board-detail::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+.board-detail::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); background-clip: padding-box; }
 .board-detail-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
 .board-detail-num { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .board-detail-gh {
