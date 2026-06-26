@@ -88,7 +88,7 @@ export default function App() {
   const [ollamaModel, setOllamaModel] = useState('qwen2.5-coder:7b')
 
   const amplitudeRef = useRef(0)
-  const { speak, cancel, voices, selectedVoice, setVoice, previewVoice } = useVoice(
+  const { speak, cancel, voices, selectedVoice, setVoice, previewVoice, voiceBackend, setVoiceBackend } = useVoice(
     amplitudeRef,
     (speaking) => {
       if (speaking) setState('speaking')
@@ -1017,6 +1017,8 @@ export default function App() {
               selectedVoice={selectedVoice}
               onSetVoice={setVoice}
               onPreviewVoice={previewVoice}
+              voiceBackend={voiceBackend}
+              onSetVoiceBackend={setVoiceBackend}
               autoLaunch={autoLaunch}
               onToggleAutoLaunch={toggleAutoLaunch}
               showTerminal={showTerminal}
