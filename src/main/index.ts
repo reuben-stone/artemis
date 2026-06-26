@@ -40,6 +40,8 @@ import {
   loadTerminalScrollback,
   getModel,
   setModel,
+  getWorkerModel,
+  setWorkerModel,
   getBackend,
   setBackend,
   getOllamaHost,
@@ -398,6 +400,8 @@ ipcMain.handle('agent:undoNewConversation', async () => {
 // Model preference (Sonnet default, switchable to Opus).
 ipcMain.handle('agent:getModel', () => getModel())
 ipcMain.handle('agent:setModel', (_e, model: string) => setModel(model))
+ipcMain.handle('agent:getWorkerModel', () => getWorkerModel())
+ipcMain.handle('agent:setWorkerModel', (_e, model: string) => setWorkerModel(model))
 
 // Backend preference: which brain runs the turn (anthropic API / local ollama /
 // claude-cli subscription). Host/model for ollama point at laptop or a brain box.

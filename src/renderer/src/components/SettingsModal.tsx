@@ -124,6 +124,21 @@ function ModelTab(p: {
 }): JSX.Element {
   const [host, setHost] = useState(p.ollamaHost)
   const [model, setModel] = useState(p.ollamaModel)
+  // Worker model is decoupled from the chat model + cheap by default (workers are the credit
+  // sink). Self-managed here via the agent IPC so we don't thread it through App.
+  const [workerModel, setWorkerModel] = useState('claude-sonnet-4-6')
+  useEffect(() => {
+    window.artemis?.agent?.getWorkerModel?.().then((m) => m && setWorkerModel(m))
+  }, [])
+  const pickWorkerModel = (m: string): void => {
+    setWorkerModel(m)
+    void window.artemis?.agent?.setWorkerModel?.(m)
+  }
+  const WORKER_MODELS: Array<{ id: string; label: string }> = [
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku' },
+    { id: 'claude-sonnet-4-6', label: 'Sonnet' },
+    { id: 'claude-opus-4-8', label: 'Opus' }
+  ]
   return (
     <section className="conn-section" style={{ borderBottom: 'none' }}>
       <div className="set-field">
@@ -141,6 +156,23 @@ function ModelTab(p: {
         Sonnet is fast &amp; cheap (default); Opus is max capability. Cloud only.
         <br />
         Takes effect on your next message — no restart needed.
+      </div>
+
+      <div className="set-field" style={{ marginTop: 16 }}>
+        <span className="set-label">Worker model</span>
+        <div className="seg">
+          {WORKER_MODELS.map((w) => (
+            <button key={w.id} className={workerModel === w.id ? 'on' : ''} onClick={() => pickWorkerModel(w.id)}>
+              {w.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="conn-detail" style={{ marginLeft: 0 }}>
+        The model dispatched <strong>worker sub-agents</strong> run on — kept separate from your chat
+        model because workers loop many rounds and are the biggest credit sink. <strong>Haiku</strong> or{' '}
+        <strong>Sonnet</strong> handle most fix-it tasks; <strong>Opus</strong> only for genuinely hard
+        ones. Applies to the next dispatch.
       </div>
 
       <div className="set-field" style={{ marginTop: 16 }}>

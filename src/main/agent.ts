@@ -30,6 +30,7 @@ import {
   markCommentsRead,
   setModel,
   setBackend,
+  setWorkerModel,
   listAllTickets,
   listTicketsByProject,
   getProjectBoards,
@@ -458,11 +459,12 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'app_control',
     description:
-      "Drive app-level settings by voice/command: which MODEL runs turns ('use Opus', 'switch to Sonnet'), which BRAIN/BACKEND ('use the local model', 'go back to cloud'), and VOICE/TTS on or off ('stop talking', 'turn voice off', 'enable voice'). Model/backend changes apply to the NEXT turn (read fresh each turn). Does NOT change the permission posture — that gate stays a human-only, on-screen decision. (Read-only/benign — no permission prompt.)",
+      "Drive app-level settings by voice/command: which MODEL runs turns ('use Opus', 'switch to Sonnet'), the WORKER MODEL that dispatched worker sub-agents run on ('run workers on Haiku' — keep it cheap; workers are the big credit sink), which BRAIN/BACKEND ('use the local model', 'go back to cloud'), and VOICE/TTS on or off ('stop talking', 'enable voice'). Model/worker-model/backend changes apply to the NEXT turn/dispatch. Does NOT change the permission posture — that gate stays a human-only, on-screen decision. (Read-only/benign — no permission prompt.)",
     input_schema: {
       type: 'object' as const,
       properties: {
-        model: { type: 'string', enum: ['opus', 'sonnet'], description: 'Switch the model: opus (max capability, pricier) or sonnet (fast default).' },
+        model: { type: 'string', enum: ['opus', 'sonnet'], description: 'Switch the chat model: opus (max capability, pricier) or sonnet (fast default).' },
+        workerModel: { type: 'string', enum: ['haiku', 'sonnet', 'opus'], description: 'Set the model worker sub-agents run on (cheap by default — they loop many rounds).' },
         backend: { type: 'string', enum: ['anthropic', 'ollama'], description: 'Switch the brain: anthropic (metered cloud) or ollama (local).' },
         voice: { type: 'string', enum: ['on', 'off'], description: 'Turn spoken replies (TTS) on or off. "off" also stops any current speech.' }
       },
@@ -1109,7 +1111,12 @@ function toolNotificationsMarkRead(input: { project?: string }): string {
  *  is a renderer toggle, driven via a UI control event. Deliberately does NOT touch the
  *  permission posture (that gate must stay a human-only, on-screen decision). */
 function toolAppControl(
-  input: { model?: 'opus' | 'sonnet'; backend?: 'anthropic' | 'ollama'; voice?: 'on' | 'off' },
+  input: {
+    model?: 'opus' | 'sonnet'
+    backend?: 'anthropic' | 'ollama'
+    voice?: 'on' | 'off'
+    workerModel?: 'haiku' | 'sonnet' | 'opus'
+  },
   ctx?: ToolContext
 ): string {
   const done: string[] = []
@@ -1118,6 +1125,11 @@ function toolAppControl(
     setModel(id)
     ctx?.emit?.({ ui: { control: 'model', value: id } }) // keep the titlebar toggle in sync
     done.push(`model → ${input.model} (takes effect next turn)`)
+  }
+  if (input.workerModel === 'haiku' || input.workerModel === 'sonnet' || input.workerModel === 'opus') {
+    const id = input.workerModel === 'opus' ? 'claude-opus-4-8' : input.workerModel === 'haiku' ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-6'
+    setWorkerModel(id)
+    done.push(`worker model → ${input.workerModel} (next dispatch)`)
   }
   if (input.backend === 'anthropic' || input.backend === 'ollama') {
     setBackend(input.backend)
@@ -1128,7 +1140,7 @@ function toolAppControl(
     ctx.emit({ ui: { control: 'voice', value: input.voice } })
     done.push(`voice ${input.voice}`)
   }
-  if (!done.length) return 'Nothing to change — pass model ("opus"/"sonnet"), backend ("anthropic"/"ollama"), and/or voice ("on"/"off").'
+  if (!done.length) return 'Nothing to change — pass model ("opus"/"sonnet"), workerModel ("haiku"/"sonnet"/"opus"), backend ("anthropic"/"ollama"), and/or voice ("on"/"off").'
   return `Done: ${done.join(', ')}.`
 }
 

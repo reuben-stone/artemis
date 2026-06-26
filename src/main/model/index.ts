@@ -18,7 +18,7 @@ let _anthropicKey: string | null = null
  * SQLite each time (so flipping backend/model/host takes effect on the next turn,
  * no restart). The agent loop never knows or cares which backend it got.
  */
-export async function getModelClient(): Promise<ModelClient> {
+export async function getModelClient(opts?: { model?: string }): Promise<ModelClient> {
   const backend = getBackend()
 
   if (backend === 'ollama') {
@@ -28,7 +28,8 @@ export async function getModelClient(): Promise<ModelClient> {
     return new ClaudeCliClient()
   }
 
-  // default: metered Anthropic API
+  // default: metered Anthropic API. `opts.model` lets a caller (e.g. a worker sub-agent)
+  // run on a cheaper model than the chat loop without changing the global preference.
   const key = await getApiKey()
   if (!key) {
     throw new Error(
@@ -39,5 +40,5 @@ export async function getModelClient(): Promise<ModelClient> {
     _anthropic = new Anthropic({ apiKey: key })
     _anthropicKey = key
   }
-  return new AnthropicClient(_anthropic, getModel())
+  return new AnthropicClient(_anthropic, opts?.model ?? getModel())
 }

@@ -124,6 +124,10 @@ You have first-class ops tools for this — they exist every session, use them w
   pass its `ticketNumber`** — the PR is then branched `artemis/ticket-<n>` and carries
   `Closes #<n>`, so GitHub wires the ticket↔PR↔board together and auto-moves the ticket to
   Done on merge. This is the north-star loop; ride GitHub's native linking, don't rebuild it.
+  **Cost note:** a worker is a *full agent loop* (up to ~30 tool rounds), so it's the biggest
+  credit sink. Workers run on a **separate, cheaper "worker model"** (Settings → Model, default
+  Sonnet) — independent of the chat model, so a conversation on Opus doesn't make every dispatch
+  5× pricier. Dispatch deliberately (one at a time, watch the cost) rather than firing many at once.
 - **`pr_queue`** — read the PR Review Queue: the worker-agent PRs awaiting the human's
   approval (project, title, branch, agent, reviewed status, link). Pass `refresh:true` to pull
   each pending PR's **live outcome** from GitHub — merge state, CI pass/fail, review decision —
