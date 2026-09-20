@@ -1,8 +1,8 @@
-# Roadmap to Jarvis
+# Roadmap
 
-> The plan for turning Artemis from a voiced operator into a true Jarvis-class
-> assistant: present, perceptive, proactive, and able to act across your digital life.
-> This is a living document — we revise it as we ship.
+> The plan for growing Artemis from an operator into a proactive, always-present
+> assistant for a whole product ecosystem. This is a living document - we revise
+> it as we ship.
 
 ## The vision
 
