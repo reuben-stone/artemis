@@ -25,5 +25,8 @@ Thumbs.db
 .idea/
 *.swp
 
+# operator memory (personal context, not source code)
+memory/
+
 # Packaged app output (build/ is kept — it holds the app icon + resources)
 release/
