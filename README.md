@@ -1,6 +1,38 @@
-# A.R.T.E.M.I.S.
+<div align="center">
 
-> **A**utonomous **R**epository-**T**ending **E**ngineering, **M**onitoring & **I**ntelligence **S**ystem
+```
+ ╔══════════════════════════════════════════════════════════════════╗
+ ║                                                                  ║
+ ║      █████╗ ██████╗ ████████╗███████╗███╗   ███╗██╗███████╗      ║
+ ║     ██╔══██╗██╔══██╗╚══██╔══╝██╔════╝████╗ ████║██║██╔════╝      ║
+ ║     ███████║██████╔╝   ██║   █████╗  ██╔████╔██║██║███████╗      ║
+ ║     ██╔══██║██╔══██╗   ██║   ██╔══╝  ██║╚██╔╝██║██║╚════██║      ║
+ ║     ██║  ██║██║  ██║   ██║   ███████╗██║ ╚═╝ ██║██║███████║      ║
+ ║     ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ╚═╝╚═╝╚══════╝      ║
+ ║                                                                  ║
+ ║    Autonomous Repository-Tending Engineering,                    ║
+ ║    Monitoring & Intelligence System                              ║
+ ║                                                                  ║
+ ║    [ SYSTEM ONLINE ] ──── Desktop AI Operations Layer            ║
+ ║                                                                  ║
+ ╚══════════════════════════════════════════════════════════════════╝
+```
+
+<img src="docs/screenshot.png" alt="Artemis - Desktop AI Operations Layer" width="800" />
+
+<br />
+
+**Multi-repo oversight** - **Worker agents** - **Gated PRs** - **Voice interface** - **Persistent memory**
+
+[![Electron](https://img.shields.io/badge/Electron-2B2E3A?logo=electron&logoColor=9FEAF9)](https://www.electronjs.org/)
+[![Claude](https://img.shields.io/badge/Claude_API-191919?logo=anthropic&logoColor=white)](https://docs.anthropic.com/)
+[![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)](https://react.dev/)
+[![Three.js](https://img.shields.io/badge/Three.js-000000?logo=three.js&logoColor=white)](https://threejs.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-07405E?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+
+</div>
+
+---
 
 A desktop **AI operations layer for your codebase ecosystem.** Artemis oversees several
 repositories at once, gives you cross-repo briefings (git status *and* live analytics),
@@ -10,8 +42,6 @@ for your review - all from a voice-capable desktop app whose memory and conversa
 
 It's built on Claude, runs on your machine, and is designed to be pointed at *any*
 ecosystem of repos - not a single project.
-
----
 
 ## What it does
 
